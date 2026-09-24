@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from PySide6 import QtCore
 from PySide6 import QtWidgets
 
 from md3.components import cards
@@ -49,10 +50,11 @@ class StatCard(cards.Card):
         self.content_layout.addWidget(self._value)
         bottom = QtWidgets.QHBoxLayout()
         bottom.setSpacing(round(spacing.SPACE_2))
-        self._delta = typography.Label("", "label-medium", "on_surface_variant")
+        self._delta = common.Pill("", "surface")
         self._delta.setToolTip("与上一个等长区间相比")
-        bottom.addWidget(self._delta)
-        self._caption = typography.Label("", "body-small", "on_surface_variant")
+        self._delta.hide()
+        bottom.addWidget(self._delta, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
+        self._caption = common.ElidedLabel("", "body-small", "on_surface_variant")
         bottom.addWidget(self._caption, 1)
         self.content_layout.addLayout(bottom)
         self.setMinimumWidth(180)
@@ -76,15 +78,24 @@ class StatCard(cards.Card):
             caption: 额外说明，显示在变化率之后。
         """
         self._value.setText(value)
-        role = "on_surface_variant"
+        prefix = ""
+        numeric = change if isinstance(change, float) else None
         if change == "":
-            self._delta.setText("")
+            self._delta.hide()
+        elif numeric is None:
+            self._delta.hide()
+            prefix = "无上期数据"
         else:
-            numeric = change if isinstance(change, float) else None
-            self._delta.setText(formatting.delta(numeric))
-            if numeric is not None and abs(numeric) >= 0.0005:
+            prefix = "较上期"
+            if abs(numeric) < 0.0005:
+                self._delta.set_text("持平")
+                self._delta.set_role("secondary", "trending_flat")
+            else:
                 good = (numeric > 0) == self._increase_is_good
-                role = "success" if good else "error"
-        self._delta.setVisible(bool(self._delta.text()))
-        self._delta.set_color_role(role)
-        self._caption.setText(caption)
+                self._delta.set_text(formatting.change_percent(numeric))
+                self._delta.set_role(
+                    "success" if good else "error",
+                    "trending_up" if numeric > 0 else "trending_down",
+                )
+            self._delta.show()
+        self._caption.setText(" · ".join(part for part in (prefix, caption) if part))

@@ -63,16 +63,43 @@ def percent(fraction: float | None, digits: int = 1) -> str:
     return f"{fraction * 100:.{digits}f}%"
 
 
+def change_percent(fraction: float) -> str:
+    """变化率的绝对值：``12.5%`` / ``250%``（100% 以上不保留小数）。"""
+    value = abs(fraction) * 100
+    return (f"{value:.0f}" if value >= 100 else f"{value:.1f}") + "%"
+
+
 def delta(fraction: float | None) -> str:
-    """变化率：``↑ 12.5%`` / ``↓ 3%`` / ``持平``。"""
+    """变化率：``↑ 12.5% 较上期`` / ``↓ 3.0% 较上期`` / ``与上期持平``。"""
     if fraction is None:
         return "无上期数据"
     if abs(fraction) < 0.0005:
         return "与上期持平"
     arrow = "↑" if fraction > 0 else "↓"
-    value = abs(fraction) * 100
-    text = f"{value:.0f}" if value >= 100 else f"{value:.1f}"
-    return f"{arrow} {text}% 较上期"
+    return f"{arrow} {change_percent(fraction)} 较上期"
+
+
+def _is_cjk(char: str) -> bool:
+    code = ord(char)
+    return 0x3400 <= code <= 0x9FFF or 0xF900 <= code <= 0xFAFF
+
+
+def _is_word(char: str) -> bool:
+    return char.isascii() and (char.isalnum() or char in "%$")
+
+
+def join_cjk(*parts: str) -> str:
+    """拼接中英文片段：汉字与英文 / 数字相邻处补一个空格（``按 Token 着色``）。"""
+    result = ""
+    for part in parts:
+        if result and part:
+            left, right = result[-1], part[0]
+            if (_is_cjk(left) and _is_word(right)) or (
+                _is_word(left) and _is_cjk(right)
+            ):
+                result += " "
+        result += part
+    return result
 
 
 def date_short(day: dt.date) -> str:
@@ -134,6 +161,23 @@ def relative(
     if days < 30:
         return f"{days} 天前"
     return value.strftime("%Y-%m-%d")
+
+
+def time_labels(moments: list[dt.datetime]) -> list[str]:
+    """时间序列的坐标标签：一天之内只显示时刻，跨天时带上日期。"""
+    if moments and max(moments) - min(moments) < dt.timedelta(hours=20):
+        return [moment.strftime("%H:%M") for moment in moments]
+    return [moment.strftime("%m-%d %H:%M") for moment in moments]
+
+
+def ago(
+    value: dt.datetime | str | None, action: str, now: dt.datetime | None = None
+) -> str:
+    """“某时做了某事”：``刚刚采样`` / ``5 分钟前保存`` / ``2026-07-12 保存``。"""
+    when = relative(value, now)
+    if when == "从未":
+        return f"从未{action}"
+    return join_cjk(when, action) if when[-1].isdigit() else when + action
 
 
 def reset_text(resets_at: dt.datetime | None, now: dt.datetime | None = None) -> str:

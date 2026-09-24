@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 from PySide6 import QtCore
 
+from claude_status import attribution
 from claude_status import claude_desktop
 from claude_status import code_config
 from claude_status import demo_data
@@ -139,6 +140,7 @@ class ClientManager(QtCore.QObject):
         self.switcher = switcher_module.Switcher(self.vault, root / "backups")
         self.offline = offline
         self.code_login: code_config.CodeLogin | None = None
+        self.oauth_account: dict = {}
         self.provider_env: dict[str, str] = {}
         self.desktop: claude_desktop.DesktopState | None = None
         self.quota_errors: dict[str, str] = {}
@@ -164,13 +166,16 @@ class ClientManager(QtCore.QObject):
     def refresh(self) -> None:
         """重新读取两个客户端的登录状态，并用本机来源更新额度。"""
         self.code_login = code_config.read_code_login()
+        self.oauth_account = code_config.read_oauth_account() or {}
         self.provider_env = code_config.read_provider_env()
         try:
             self.desktop = claude_desktop.read_state()
         except OSError:
             self.desktop = None
         learned = self._learn_identity()
-        changed_accounts = self._apply_local_quotas() or learned
+        quotas = self._apply_local_quotas()
+        observed = self._observe_sources()
+        changed_accounts = learned or quotas or observed
         current = self.current_code_account()
         settings = self._state.settings
         if current is not None and settings.active_account_id != current.id:
@@ -183,6 +188,9 @@ class ClientManager(QtCore.QObject):
             changed_accounts = True
         if changed_accounts:
             self._state.save()
+        if learned or quotas or observed:
+            # 账号身份或时间线有变化：重新归属本机用量。
+            self._state.reattribute()
         signature = self._make_signature()
         if signature != self._signature or changed_accounts:
             self._signature = signature
@@ -274,7 +282,7 @@ class ClientManager(QtCore.QObject):
         没有保存登录的账号（例如由本机登录信息自动创建的）因此也能被
         Desktop 识别，并对应上 Desktop 的额度采样。返回账号是否有变化。
         """
-        oauth_account = code_config.read_oauth_account() or {}
+        oauth_account = self.oauth_account
         uuid = str(oauth_account.get("accountUuid") or "")
         email = str(oauth_account.get("emailAddress") or "").lower()
         if not uuid or not email:
@@ -294,6 +302,75 @@ class ClientManager(QtCore.QObject):
                 return True
         return False
 
+    def _observe_sources(self) -> bool:
+        """把各用量来源当前使用的身份记入时间线，返回是否有变化。"""
+        raw = self._state.settings.usage_sources
+        now = dt.datetime.now().astimezone()
+        changed = False
+        code = attribution.current_code_identity(
+            self.code_login, self.provider_env
+        )
+        if code is not None:
+            changed |= attribution.record_event(raw, code[0], code[1], now)
+        desktop = self.desktop
+        if desktop is not None:
+            desktop_source = models.UsageSource.DESKTOP
+            # 额度采样记录了过去各时刻登录的组织，可补上本工具没运行的时段。
+            previous = ""
+            for sample in desktop.samples:
+                if sample.org and sample.org != previous:
+                    changed |= attribution.record_event(
+                        raw,
+                        desktop_source,
+                        attribution.org_identity(sample.org),
+                        sample.time,
+                    )
+                previous = sample.org
+            if desktop.logged_in and desktop.account_uuid:
+                changed |= attribution.record_event(
+                    raw,
+                    desktop_source,
+                    attribution.account_identity(desktop.account_uuid),
+                    now,
+                )
+        return changed
+
+    def attributor(self) -> attribution.Attributor:
+        """按当前的账号与时间线归属本机用量。"""
+        fallback = {}
+        uuid = str(self.oauth_account.get("accountUuid") or "")
+        if uuid:
+            # 没观察到过 Claude Code 官方来源时，归给它最近登录的账号。
+            fallback[models.UsageSource.CODE] = attribution.account_identity(
+                uuid
+            )
+        linked = self._state.linked_account()
+        return attribution.Attributor(
+            attribution.load_events(self._state.settings.usage_sources),
+            self.accounts,
+            linked.id if linked else None,
+            fallback,
+        )
+
+    def source_owner(
+        self, source: models.UsageSource
+    ) -> tuple[bool, models.Account | None]:
+        """某来源当前的 (是否识别到身份, 对应的账号)。"""
+        now = dt.datetime.now().astimezone()
+        attributor = self.attributor()
+        identity = attributor.identity_at(source, now)
+        account_id = attributor.account_for(source, now)
+        return identity is not None, self._state.account(account_id)
+
+    def fresh_desktop_org(self) -> str:
+        """Desktop 正在运行且刚采样过时，当前登录账号所在的组织。"""
+        desktop = self.desktop
+        if desktop is None or not desktop.samples or not desktop.running:
+            return ""
+        latest = desktop.samples[-1]
+        now = dt.datetime.now().astimezone()
+        return latest.org if now - latest.time < SAMPLE_FRESHNESS else ""
+
     def _apply_local_quotas(self) -> bool:
         """用 Desktop 采样与 Claude Code 缓存更新额度，返回账号是否有变化。"""
         changed = False
@@ -301,15 +378,10 @@ class ClientManager(QtCore.QObject):
         desktop = self.desktop
         candidates: list[tuple[models.Account, quota_module.Quota]] = []
         if desktop is not None and desktop.samples:
-            latest = desktop.samples[-1]
             current = self.current_desktop_account()
-            if (
-                current is not None
-                and not current.org_uuid
-                and desktop.running
-                and now - latest.time < SAMPLE_FRESHNESS
-            ):
-                current.org_uuid = latest.org
+            org = self.fresh_desktop_org()
+            if current is not None and not current.org_uuid and org:
+                current.org_uuid = org
                 changed = True
             by_org = {sample.org: sample for sample in desktop.samples}
             for account in self.accounts:
@@ -473,6 +545,36 @@ class ClientManager(QtCore.QObject):
     def undo_code(self, backup) -> None:
         """撤销上一次 Claude Code 切换。"""
         self.switcher.restore_code_state(backup)
+        self.refresh()
+
+    def link_desktop(self, account: models.Account) -> None:
+        """把 Desktop 当前登录的账号关联到该账号（不需要退出 Desktop）。
+
+        关联后即可识别 Desktop 的登录、对应额度采样并归属 Code 标签页的
+        用量；要一键切换回该账号，还需要保存会话（``capture_desktop``）。
+
+        Raises:
+            switcher.SwitchError: Desktop 没有登录，或该账号记录的是另一个
+                Claude 账号。
+        """
+        desktop = self.desktop
+        if desktop is None or not desktop.logged_in or not desktop.account_uuid:
+            raise switcher_module.SwitchError("Claude Desktop 当前没有登录")
+        uuid = desktop.account_uuid
+        if account.claude_uuid and account.claude_uuid != uuid:
+            raise switcher_module.SwitchError(
+                f"「{account.display_name}」记录的是另一个 Claude 账号，"
+                "请选择其他账号或新建账号"
+            )
+        owner = switcher_module.identify_desktop_account(uuid, self.accounts)
+        if owner is not None and owner is not account:
+            raise switcher_module.SwitchError(
+                f"Desktop 当前登录的账号已关联到「{owner.display_name}」"
+            )
+        account.claude_uuid = uuid
+        account.org_uuid = account.org_uuid or self.fresh_desktop_org()
+        self._state.settings.desktop_account_id = account.id
+        self._state.accounts_modified()
         self.refresh()
 
     def capture_desktop(

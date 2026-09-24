@@ -157,11 +157,9 @@ class AccountDialog(dialogs.BasicDialog):
         )
         switches = QtWidgets.QVBoxLayout()
         switches.setSpacing(0)
-        self.link_local = selection.Switch(
-            "关联本机 Claude Code 日志", source.link_local
-        )
+        self.link_local = selection.Switch("用量默认归属", source.link_local)
         self.link_local.setToolTip(
-            "本机日志中的用量将计入此账号（同一时间只能关联一个账号）"
+            "无法判断来源账号的本机日志用量计入此账号（同一时间只能有一个）"
         )
         self.favorite = selection.Switch("收藏", source.favorite)
         switches.addWidget(self.link_local)

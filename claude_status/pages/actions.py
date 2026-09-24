@@ -217,8 +217,8 @@ def switch_account(
         _alert(
             widget,
             "无法切换 Claude Desktop",
-            "该账号还没有保存 Claude Desktop 登录：请先在 Desktop 中登录"
-            "该账号，再在“客户端”页点击“保存当前登录”。",
+            "该账号还没有保存 Claude Desktop 会话：请先在 Desktop 中登录"
+            "该账号，再在“客户端”页点击“保存会话…”。",
         )
         return
     if not code and not desktop:
@@ -291,76 +291,139 @@ def choose_account(
     headline: str,
     text: str,
     preferred: models.Account | None,
-) -> models.Account | None:
-    """让用户选择一个订阅账号，可选"新建账号"；取消返回 None。"""
+    confirm_text: str = "保存",
+    claude_uuid: str = "",
+) -> tuple[models.Account, bool] | None:
+    """让用户选择一个订阅账号或“新建账号”，返回 (账号, 是否新建)。
+
+    新建的账号还没有加入账号列表，由调用方在操作成功后加入，取消或失败时
+    不会留下空账号。``claude_uuid`` 不为空时，标出记录着其他 Claude 账号的
+    选项。
+    """
     oauth = [
         a for a in state.accounts if a.auth_type is models.AuthType.OAUTH
     ]
-    options = [f"{a.display_name}（{a.email or '未填写邮箱'}）" for a in oauth]
+    options = []
+    for account in oauth:
+        detail = account.email or "未填写邮箱"
+        if claude_uuid and account.claude_uuid not in ("", claude_uuid):
+            detail += " · 对应其他 Claude 账号"
+        options.append(f"{account.display_name}（{detail}）")
     options.append("＋ 新建账号")
     index = oauth.index(preferred) if preferred in oauth else len(oauth)
     dialog = dialogs.BasicDialog(headline, text, parent=widget.window())
-    field = text_fields.SelectField("保存到账号", options, index)
-    field.setMinimumWidth(380)
+    field = text_fields.SelectField("账号", options, index)
+    field.setMinimumWidth(400)
     dialog.set_content(field)
     dialog.add_action("取消", QtWidgets.QDialogButtonBox.ButtonRole.RejectRole)
-    dialog.add_action("保存")
+    dialog.add_action(confirm_text)
     if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
         return None
     chosen = field.selected_index
     if 0 <= chosen < len(oauth):
-        return oauth[chosen]
+        return oauth[chosen], False
     account = models.Account(
         name="Claude Desktop 账号",
         tags=["Claude Desktop"],
-        notes="保存 Desktop 登录时新建，可编辑名称与邮箱。",
+        notes="关联 Claude Desktop 登录时新建，可编辑名称与邮箱。",
     )
-    state.accounts.append(account)
-    state.accounts_modified(rebuild=False)
+    return account, True
+
+
+def _desktop_candidate(state: state_module.AppState) -> models.Account | None:
+    """关联 Desktop 时预选的账号：之前为 Desktop 新建、还没有身份的账号。"""
+    return next(
+        (
+            a
+            for a in state.accounts
+            if a.auth_type is models.AuthType.OAUTH
+            and not a.claude_uuid
+            and "Claude Desktop" in a.tags
+        ),
+        None,
+    )
+
+
+def link_desktop(
+    widget: QtWidgets.QWidget,
+    state: state_module.AppState,
+    account: models.Account | None = None,
+    offer_save: bool = True,
+) -> models.Account | None:
+    """把 Desktop 当前登录的账号关联到账号（不需要退出 Desktop）。
+
+    未指定账号时让用户选择。关联后即可显示该账号的额度，Desktop Code
+    标签页的用量也会计入它；返回关联的账号，取消或失败时返回 None。
+    """
+    clients = state.clients
+    desktop = clients.desktop
+    if desktop is None or not desktop.logged_in:
+        _alert(widget, "无法关联", "Claude Desktop 当前没有登录。")
+        return None
+    created = False
+    if account is None:
+        chosen = choose_account(
+            widget,
+            state,
+            "关联 Claude Desktop 账号",
+            "Desktop 当前登录的是哪个账号？关联后会显示它的 5 小时与每周"
+            "额度，Code 标签页的用量也会计入该账号；不需要退出 Desktop。",
+            _desktop_candidate(state),
+            confirm_text="关联",
+            claude_uuid=desktop.account_uuid,
+        )
+        if chosen is None:
+            return None
+        account, created = chosen
+    if created:
+        state.accounts.append(account)
+    try:
+        clients.link_desktop(account)
+    except _ERRORS as exc:
+        if created:
+            state.accounts.remove(account)
+        _alert(widget, "无法关联", str(exc))
+        return None
+    if offer_save and not clients.vault.has_desktop(account.id):
+        snackbar.show(
+            widget,
+            f"Desktop 已关联到「{account.display_name}」；保存会话后可以一键切换回来",
+            "保存会话",
+            lambda: capture_desktop(widget, state),
+            duration_ms=8000,
+        )
+    elif offer_save:
+        snackbar.show(widget, f"Desktop 已关联到「{account.display_name}」")
     return account
 
 
 def capture_desktop(
     widget: QtWidgets.QWidget, state: state_module.AppState
 ) -> None:
-    """把 Desktop 当前的登录保存到用户选择的账号。"""
+    """保存 Desktop 当前登录的会话（需要退出 Desktop），之后可一键切换回来。
+
+    当前登录还没有关联账号时先关联。
+    """
     clients = state.clients
     desktop = clients.desktop
     if desktop is None or not desktop.logged_in:
         _alert(widget, "无法保存", "Claude Desktop 当前没有登录。")
         return
-    preferred = clients.current_desktop_account()
-    target = choose_account(
-        widget,
-        state,
-        "保存 Claude Desktop 登录",
-        "把 Desktop 当前的登录会话保存到账号，之后可以一键切换回来。",
-        preferred,
-    )
+    target = clients.current_desktop_account()
     if target is None:
-        return
-    mismatch = bool(
-        target.claude_uuid
-        and desktop.account_uuid
-        and target.claude_uuid != desktop.account_uuid
-    )
-    if mismatch and not dialogs.confirm(
-        widget.window(),
-        "账号可能不一致",
-        f"Desktop 当前登录的账号与「{target.display_name}」记录的账号标识"
-        "不同。仍然保存到该账号吗？",
-        confirm_text="仍然保存",
-    ):
-        return
+        target = link_desktop(widget, state, offer_save=False)
+        if target is None:
+            return
+    account = target
 
     def action() -> str:
-        size = clients.capture_desktop(target, allow_mismatch=mismatch)
+        size = clients.capture_desktop(account)
         return (
-            f"Desktop 登录已保存到「{target.display_name}」"
+            f"Desktop 会话已保存到「{account.display_name}」"
             f"（{formatting.size(size)}）"
         )
 
-    DesktopRunner(widget, state, "保存 Claude Desktop 登录", action).start()
+    DesktopRunner(widget, state, "保存 Claude Desktop 会话", action).start()
 
 
 def new_desktop_login(

@@ -70,11 +70,16 @@ class _SparseAxisChart(charts.CartesianChart):
         color = self.color("on_surface_variant")
         bounds = QtCore.QRectF(self.rect())
         width = widest + 4
+        limit = bounds.right() + 1
         # 从最后一个分类往前取，保证最近的日期总有标签。
         for index in range(count - 1, -1, -step):
             center = self.category_slot(index, plot).center().x()
             left = min(center - width / 2, bounds.right() - width)
             left = max(bounds.left(), left)
+            # 贴边后左移的标签可能压住前一个标签：重叠时跳过前一个。
+            if left + width > limit:
+                continue
+            limit = left - LABEL_GAP / 2
             typography.paint_text(
                 painter,
                 QtCore.QRectF(

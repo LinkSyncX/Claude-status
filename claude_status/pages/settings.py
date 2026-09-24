@@ -32,6 +32,8 @@ SEEDS: list[tuple[str, str]] = [
     ("琥珀金", "#8B5000"),
 ]
 _SOURCES = [models.DataSource.LOCAL, models.DataSource.DEMO]
+# 开关轨道加间距的宽度：开关下方的说明文字从这里开始。
+SWITCH_TEXT_INDENT = 62
 PRICE_COLUMNS = [
     ("input", "输入"),
     ("output", "输出"),
@@ -175,6 +177,7 @@ class SettingsPage(common.Page):
             "数据源",
             "本机日志读取 Claude Code 写在 ~/.claude/projects 中的会话记录，"
             "只统计用量字段、不读取对话内容；演示数据按账号列表模拟生成。",
+            icon="database",
         )
         self._source = buttons.SegmentedButton(
             [
@@ -278,6 +281,7 @@ class SettingsPage(common.Page):
             "切换与额度",
             "一键切换账号与订阅额度查询；Claude Code、Claude Desktop 的登录"
             "管理在“客户端”页。",
+            icon="swap_horiz",
         )
         settings = self._state.settings
         self._switch_desktop = selection.Switch(
@@ -303,18 +307,18 @@ class SettingsPage(common.Page):
         offline = self._state.clients.offline
         self._quota_online.setEnabled(not offline)
         card.add_widget(self._quota_online)
-        card.add_widget(
-            common.label(
-                "已通过 --offline 参数禁用联网。"
-                if offline
-                else "用保存的登录令牌查询 api.anthropic.com，每 10 分钟自动刷新；"
-                "Claude Code 正在使用的登录只读取、不续期令牌。关闭后只使用 "
-                "Claude Desktop 采样与 Claude Code 缓存中的额度。",
-                "body-small",
-                "on_surface_variant",
-                wrap=True,
-            )
+        hint = common.label(
+            "已通过 --offline 参数禁用联网。"
+            if offline
+            else "用保存的登录令牌查询 api.anthropic.com，每 10 分钟自动刷新；"
+            "Claude Code 正在使用的登录只读取、不续期令牌。关闭后只使用 "
+            "Claude Desktop 采样与 Claude Code 缓存中的额度。",
+            "body-small",
+            "on_surface_variant",
+            wrap=True,
         )
+        # 与开关的文字对齐，而不是与开关本身对齐。
+        card.add_widget(common.indented(hint, SWITCH_TEXT_INDENT))
         self._proxy = text_fields.OutlinedTextField(
             "代理",
             settings.proxy,
@@ -346,7 +350,9 @@ class SettingsPage(common.Page):
     # ---- 外观 -------------------------------------------------------------
 
     def _build_appearance(self) -> None:
-        card = common.SectionCard("外观", "Material Design 3 动态配色")
+        card = common.SectionCard(
+            "外观", "Material Design 3 动态配色", icon="palette"
+        )
         self._dark = selection.Switch("深色模式", self._state.settings.dark)
         self._dark.toggled.connect(
             lambda checked: self._state.update_settings(dark=checked)
@@ -377,6 +383,7 @@ class SettingsPage(common.Page):
             "模型单价",
             "美元 / 百万 token（Anthropic 一方 API 价格，2026-06）。订阅套餐不按"
             " token 计费，金额仅供参考；双击自定义条目可修改或删除。",
+            icon="sell",
         )
         add = buttons.FilledTonalButton("添加自定义单价", icon="add")
         add.clicked.connect(lambda: self._edit_price(""))
@@ -470,6 +477,7 @@ class SettingsPage(common.Page):
             "数据管理",
             "账号、设置与保存的登录都在本机数据目录中；API Key 与登录令牌"
             f"{secure.description()}。",
+            icon="folder",
         )
         path = common.label(
             str(self._state.store.path), "body-small", "on_surface_variant",

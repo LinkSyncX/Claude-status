@@ -309,11 +309,8 @@ class SwitchFlowTest(fixtures.IsolatedClaudeTest):
         self.login_desktop("alice")
         self.desktop_processes.start_desktop()
         self.state.clients.refresh()
-        self.assertIn("运行中（1 个进程）", self._texts())
-        with (
-            mock.patch.object(actions, "choose_account", return_value=self.alice),
-            mock.patch.object(dialogs, "confirm", return_value=True),
-        ):
+        self.assertIn("· 1 个进程", self._texts())
+        with mock.patch.object(dialogs, "confirm", return_value=True):
             actions.capture_desktop(self.page, self.state)
             vault = self.state.clients.vault
             self.assertTrue(_pump_until(lambda: vault.has_desktop(self.alice.id)))
@@ -323,7 +320,7 @@ class SwitchFlowTest(fixtures.IsolatedClaudeTest):
         self.assertEqual(self.desktop_processes.calls, ["quit", "launch"])
         info = self.state.clients.info(self.alice)
         self.assertTrue(info.desktop_saved and info.desktop_current)
-        self.assertIn("ALICE（已保存）", self._texts())
+        self.assertIn("ALICE（会话已保存）", self._texts())
 
     def test_desktop_switch_forces_quit_when_tray_ignores_close(self):
         # 先保存 alice 的会话，再让 Desktop 登录 bob 并保存到新账号。

@@ -6,6 +6,7 @@ import dataclasses
 import datetime as dt
 import pathlib
 import sys
+from typing import override
 
 from PySide6 import QtCore
 from PySide6 import QtGui
@@ -26,14 +27,17 @@ from md3.components import transitions
 from md3.tokens import spacing
 
 from claude_status import analytics
+from claude_status import exporters
 from claude_status import formatting
 from claude_status import models
 from claude_status import state as state_module
 from claude_status import storage
 from claude_status.pages import account_dialog
 from claude_status.pages import actions
+from claude_status.pages import export_dialog
 from claude_status.widgets import account_card
 from claude_status.widgets import common
+from claude_status.widgets import dense_charts
 from claude_status.widgets import quota_meter
 from claude_status.widgets import stat_card
 
@@ -64,6 +68,15 @@ def env_snippet(account: models.Account) -> str:
 
 def _percent_text(value: float) -> str:
     return f"{value:.0f}%"
+
+
+@dataclasses.dataclass(frozen=True)
+class DashColumn(data_table.Column):
+    """没有值的单元格显示“—”（排序仍按原值，空值排在最后）。"""
+
+    @override
+    def text_of(self, row) -> str:
+        return super().text_of(row) or "—"
 
 
 class AccountsPage(common.Page):
@@ -144,7 +157,7 @@ class AccountsPage(common.Page):
         )
         self._view.selection_changed.connect(self._on_view_changed)
         self._quota_button = buttons.IconButton(
-            "data_usage", tooltip="刷新各账号的 5 小时与每周额度"
+            "speed", tooltip="刷新各账号的 5 小时与每周额度"
         )
         self._quota_button.clicked.connect(self.refresh_quotas)
         add = buttons.FilledButton("新建账号", icon="person_add")
@@ -213,14 +226,14 @@ class AccountsPage(common.Page):
                     formatter=formatting.money,
                     width=100,
                 ),
-                data_table.Column(
+                DashColumn(
                     "five_hour",
                     "5 小时",
                     numeric=True,
                     formatter=_percent_text,
                     width=84,
                 ),
-                data_table.Column(
+                DashColumn(
                     "seven_day",
                     "本周",
                     numeric=True,
@@ -550,6 +563,14 @@ class AccountsPage(common.Page):
                 key=("switch_desktop", None),
             ),
         ]
+        if self._can_link_desktop(account):
+            items.append(
+                menus.MenuItem(
+                    "关联为 Desktop 当前登录",
+                    "link",
+                    key=("link_desktop", None),
+                )
+            )
         if info.code_saved:
             items.append(
                 menus.MenuItem(
@@ -574,8 +595,8 @@ class AccountsPage(common.Page):
                 key=("favorite", None),
             ),
             menus.MenuItem(
-                "取消关联本机日志" if account.link_local else "关联本机日志",
-                "link_off" if account.link_local else "link",
+                "取消用量默认归属" if account.link_local else "设为用量默认归属",
+                "move_to_inbox",
                 key=("link", None),
             ),
         ]
@@ -621,6 +642,8 @@ class AccountsPage(common.Page):
             self.switch_account(account_id, code=True, desktop=False)
         elif action == "switch_desktop":
             self.switch_account(account_id, code=False, desktop=True)
+        elif action == "link_desktop":
+            actions.link_desktop(self, self._state, account)
         elif action == "forget_code":
             actions.forget_login(self, self._state, account, desktop=False)
         elif action == "forget_desktop":
@@ -632,9 +655,9 @@ class AccountsPage(common.Page):
             self._state.link_local(account_id if linking else None)
             snackbar.show(
                 self,
-                f"本机 Claude Code 用量将计入「{account.display_name}」"
+                f"无法识别来源的本机用量将计入「{account.display_name}」"
                 if linking
-                else "已取消关联本机日志",
+                else "已取消用量默认归属",
             )
         elif action == "copy_key":
             self._copy(account.api_key, "密钥已复制到剪贴板")
@@ -650,6 +673,10 @@ class AccountsPage(common.Page):
             menus.MenuItem("导入账号…", "upload", key="import"),
             menus.MenuItem("导出账号（不含密钥）…", "download", key="export"),
             menus.MenuItem("导出账号（含密钥）…", "key", key="export_secret"),
+            menus.MenuItem("导出到 sub2api…", "cloud_upload", key="export_sub2api"),
+            menus.MenuItem(
+                "导出到 CPA（CLIProxyAPI）…", "cloud_upload", key="export_cpa"
+            ),
             menus.MenuItem(separator=True),
             menus.MenuItem(
                 "保存本机 Claude Code 当前登录",
@@ -708,10 +735,83 @@ class AccountsPage(common.Page):
                 dialogs.alert(self.window(), "导出失败", str(exc))
                 return
             snackbar.show(self, f"已导出 {len(self._state.accounts)} 个账号")
+        elif key == "export_sub2api":
+            self.export_to(exporters.SUB2API)
+        elif key == "export_cpa":
+            self.export_to(exporters.CPA)
         elif key == "detect":
             self.import_local_login()
         elif key == "samples":
             self._add_samples()
+
+    def export_to(self, fmt: str) -> None:
+        """导出到 sub2api 或 CPA（CLIProxyAPI）。"""
+        clients = self._state.clients
+        items = exporters.collect(
+            self._state.accounts,
+            clients.vault,
+            clients.code_login,
+            clients.code_owner(),
+        )
+        dialog = export_dialog.ExportDialog(fmt, items, self.window())
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        chosen = dialog.selected()
+        try:
+            if fmt == exporters.SUB2API:
+                self._export_sub2api(chosen)
+            else:
+                self._export_cpa(chosen)
+        except OSError as exc:
+            dialogs.alert(self.window(), "导出失败", str(exc))
+
+    def _export_sub2api(self, chosen: list[exporters.ExportItem]) -> None:
+        name = f"sub2api-accounts-{dt.date.today():%Y%m%d}.json"
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self.window(), "导出到 sub2api", name, "JSON (*.json)"
+        )
+        if not path:
+            return
+        count = exporters.write_sub2api(pathlib.Path(path), chosen)
+        snackbar.show(
+            self,
+            f"已导出 {count} 个账号：在 sub2api 管理后台的账号管理中导入该文件",
+            duration_ms=6000,
+        )
+
+    def _export_cpa(self, chosen: list[exporters.ExportItem]) -> None:
+        start = exporters.CPA_AUTH_DIR
+        directory = QtWidgets.QFileDialog.getExistingDirectory(
+            self.window(),
+            "选择 CLIProxyAPI 的认证目录",
+            str(start if start.is_dir() else pathlib.Path.home()),
+        )
+        if not directory:
+            return
+        target = pathlib.Path(directory)
+        existing = [
+            name for name in exporters.cpa_targets(chosen) if (target / name).exists()
+        ]
+        if existing and not dialogs.confirm(
+            self.window(),
+            "覆盖同名文件？",
+            f"目录中已有 {len(existing)} 个同名文件（{'、'.join(existing[:3])}"
+            f"{'…' if len(existing) > 3 else ''}），导出会覆盖它们。",
+            confirm_text="覆盖",
+            icon="warning",
+        ):
+            return
+        written = exporters.write_cpa(target, chosen)
+        note = (
+            f"；把 {exporters.CPA_API_KEYS_NAME} 中的条目合并到 config.yaml"
+            if exporters.CPA_API_KEYS_NAME in written
+            else ""
+        )
+        snackbar.show(
+            self,
+            f"已写入 {len(written)} 个文件到 {target}{note}",
+            duration_ms=8000,
+        )
 
     def import_local_login(self) -> None:
         """保存本机 Claude Code 当前的订阅登录（没有对应账号时新建）。"""
@@ -719,10 +819,36 @@ class AccountsPage(common.Page):
 
     # ---- 提示横幅 ---------------------------------------------------------
 
+    def _can_link_desktop(self, account: models.Account) -> bool:
+        """Desktop 已登录但还没有关联账号时，该账号能否关联为当前登录。"""
+        clients = self._state.clients
+        desktop = clients.desktop
+        return (
+            desktop is not None
+            and desktop.logged_in
+            and bool(desktop.account_uuid)
+            and clients.current_desktop_account() is None
+            and account.auth_type is models.AuthType.OAUTH
+            and account.claude_uuid in ("", desktop.account_uuid)
+        )
+
     def _banner_spec(self) -> tuple[str, str, str, str] | None:
         """(键, 文字, 图标, 操作)；当前登录都已保存时返回 None。"""
         clients = self._state.clients
         vault = clients.vault
+        desktop = clients.desktop
+        if (
+            desktop is not None
+            and desktop.logged_in
+            and clients.current_desktop_account() is None
+        ):
+            return (
+                f"desktop-link:{desktop.account_uuid}",
+                "Claude Desktop 当前登录的账号还没有关联：关联后显示它的额度，"
+                "Code 标签页的用量也会计入它（不需要退出 Desktop）。",
+                "desktop_windows",
+                "link_desktop",
+            )
         login = clients.code_login
         if login is not None:
             owner = clients.code_owner()
@@ -744,17 +870,15 @@ class AccountsPage(common.Page):
                 "hub",
                 "save_env",
             )
-        desktop = clients.desktop
-        if desktop is not None and desktop.logged_in:
-            owner = clients.current_desktop_account()
-            if owner is None or not vault.has_desktop(owner.id):
-                return (
-                    f"desktop:{desktop.account_uuid}",
-                    "Claude Desktop 当前的登录还没有保存，保存后才能在账号之间"
-                    "一键切换。",
-                    "desktop_windows",
-                    "clients",
-                )
+        owner = clients.current_desktop_account()
+        if owner is not None and not vault.has_desktop(owner.id):
+            return (
+                f"desktop:{owner.id}",
+                "Claude Desktop 的登录会话还没有保存，保存后才能一键切换回"
+                f"「{owner.display_name}」。",
+                "desktop_windows",
+                "clients",
+            )
         return None
 
     def _update_banner(self) -> None:
@@ -771,7 +895,9 @@ class AccountsPage(common.Page):
             return
         _key, text, icon, action = spec
         banner = common.InfoBanner(text, icon=icon)
-        label = "前往客户端" if action == "clients" else "立即保存"
+        label = {"clients": "前往客户端", "link_desktop": "关联…"}.get(
+            action, "立即保存"
+        )
         banner.add_action(label).clicked.connect(
             lambda: self._on_banner_action(action)
         )
@@ -784,6 +910,8 @@ class AccountsPage(common.Page):
             actions.capture_code(self, self._state)
         elif action == "save_env":
             actions.import_provider_env(self, self._state)
+        elif action == "link_desktop":
+            actions.link_desktop(self, self._state)
         else:
             self.navigate_requested.emit("clients")
 
@@ -872,12 +1000,20 @@ class AccountsPage(common.Page):
         if account.auth_type is models.AuthType.OAUTH:
             layout.addWidget(self._quota_card(account, info))
         layout.addWidget(self._usage_chart(account))
+        oauth = account.auth_type is models.AuthType.OAUTH
         details = [
             ("套餐", account.plan.label),
             ("认证方式", account.auth_type.label),
             ("组织", account.organization or "—"),
-            ("Base URL", account.base_url or "—"),
-            ("密钥", account.masked_key() or "—"),
+        ]
+        if not oauth:
+            details += [
+                ("Base URL", account.base_url or "官方 API"),
+                ("密钥", account.masked_key() or "—"),
+            ]
+            if account.env:
+                details.append(("额外变量", "、".join(sorted(account.env))))
+        details += [
             (
                 "月度预算",
                 formatting.money(account.monthly_budget)
@@ -892,9 +1028,12 @@ class AccountsPage(common.Page):
                 ),
             ),
             ("最近使用", formatting.relative(account.last_used_at)),
-            ("Claude Code", self._saved_text(account, desktop=False)),
-            ("Desktop", self._saved_text(account, desktop=True)),
         ]
+        if oauth:
+            details += [
+                ("Claude Code", self._saved_text(account, desktop=False)),
+                ("Desktop", self._saved_text(account, desktop=True)),
+            ]
         grid = QtWidgets.QGridLayout()
         grid.setHorizontalSpacing(round(spacing.SPACE_4))
         grid.setVerticalSpacing(round(spacing.SPACE_2))
@@ -941,8 +1080,8 @@ class AccountsPage(common.Page):
         )
         if not saved:
             return "未保存登录"
-        when = formatting.relative((meta or {}).get("saved_at"))
-        return f"已保存登录（{when}）"
+        when = (meta or {}).get("saved_at")
+        return formatting.ago(when, "保存") if when else "已保存"
 
     def _quota_card(
         self, account: models.Account, info
@@ -954,10 +1093,9 @@ class AccountsPage(common.Page):
             variant=cards.CardVariant.FILLED,
         )
         lines = quota_meter.quota_lines(info.quota, include_scoped=True)
-        width = quota_meter.title_width(lines)
-        for line in lines:
-            meter = quota_meter.QuotaMeter(title_width=width)
-            meter.set_line(line)
+        meters = [quota_meter.QuotaMeter() for _ in lines]
+        quota_meter.align(meters, lines)
+        for meter in meters:
             card.add_widget(meter)
         if info.quota_error:
             card.add_widget(
@@ -971,7 +1109,7 @@ class AccountsPage(common.Page):
         samples = self._state.clients.samples_for(account)
         if len(samples) >= 2:
             recent = samples[-48:]
-            chart = charts.LineChart(
+            chart = dense_charts.DenseLineChart(
                 [
                     charts.Series(
                         "5 小时", [float(s.usage.get("fh") or 0) for s in recent]
@@ -980,14 +1118,13 @@ class AccountsPage(common.Page):
                         "本周", [float(s.usage.get("sd") or 0) for s in recent]
                     ),
                 ],
-                [s.time.strftime("%m-%d %H:%M") for s in recent],
+                formatting.time_labels([s.time for s in recent]),
                 smooth=False,  # 5 小时窗口重置时陡降，平滑曲线会冲出坐标范围
                 show_points=False,
             )
-            chart.set_show_axes(False)
             chart.set_y_range(0, 100)
             chart.set_value_formatter(lambda v: f"{v:.0f}%")
-            chart.setFixedHeight(150)
+            chart.setFixedHeight(180)
             card.add_widget(
                 common.label(
                     "额度走势（Claude Desktop 采样）",

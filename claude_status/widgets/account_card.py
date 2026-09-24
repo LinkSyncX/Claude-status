@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from typing import override
+
 from PySide6 import QtCore
+from PySide6 import QtGui
 from PySide6 import QtWidgets
 
 from md3.components import avatar
@@ -92,6 +95,24 @@ def switch_description(code: bool, desktop: bool) -> str:
     return "切换 Claude Code 到此账号"
 
 
+class RoleProgress(progress.LinearProgressIndicator):
+    """可以改变颜色的线性进度条（接近 / 超出预算时显示警告 / 错误色）。"""
+
+    def __init__(self, value: float = 0.0) -> None:
+        super().__init__(value)
+        self._role = "primary"
+
+    def set_role(self, role: str) -> None:
+        """设置进度的颜色角色。"""
+        if role != self._role:
+            self._role = role
+            self.update()
+
+    @override
+    def active_color(self) -> QtGui.QColor:
+        return self.color(self._role)
+
+
 class AccountCard(cards.Card):
     """一个账号的概要卡片；点击卡片空白处发出 ``clicked``。
 
@@ -159,7 +180,7 @@ class AccountCard(cards.Card):
         budget_layout = QtWidgets.QVBoxLayout(self._budget_row)
         budget_layout.setContentsMargins(0, 0, 0, 0)
         budget_layout.setSpacing(4)
-        self._budget_bar = progress.LinearProgressIndicator(0.0)
+        self._budget_bar = RoleProgress(0.0)
         budget_layout.addWidget(self._budget_bar)
         self._budget_label = common.ElidedLabel(
             "", "body-small", "on_surface_variant"
@@ -226,11 +247,9 @@ class AccountCard(cards.Card):
     def set_quota(self, info: client_state.ClientInfo) -> None:
         """显示 5 小时与每周额度。"""
         lines = quota_meter.quota_lines(info.quota)
-        padded: list[quota_meter.QuotaLine | None] = [*lines, None, None]
-        for meter, line in zip(self._meters, padded, strict=False):
-            meter.setVisible(line is not None)
-            if line is not None:
-                meter.set_line(line)
+        for index, meter in enumerate(self._meters):
+            meter.setVisible(index < len(lines))
+        quota_meter.align(self._meters, lines)
         tooltip = quota_meter.describe_source(info.quota)
         for meter in self._meters:
             meter.setToolTip(tooltip)
@@ -265,6 +284,9 @@ class AccountCard(cards.Card):
         if budget > 0:
             ratio = totals.cost / budget
             self._budget_bar.set_value(min(1.0, ratio))
+            self._budget_bar.set_role(
+                "error" if ratio > 1 else "warning" if ratio >= 0.9 else "primary"
+            )
             over = "（已超出）" if ratio > 1 else ""
             self._budget_label.setText(
                 f"月度预算 {formatting.percent(ratio, 0)} · "

@@ -20,6 +20,7 @@ from claude_status.pages import dashboard
 from claude_status.widgets import calendar_heatmap
 from claude_status.widgets import common
 from claude_status.widgets import dense_charts
+from claude_status.widgets import quota_meter
 
 METRICS = [
     analytics.Metric.TOKENS,
@@ -27,6 +28,8 @@ METRICS = [
     analytics.Metric.COST,
 ]
 MAX_YEARS = 4
+# 当日明细中显示占比条的模型数。
+DAY_MODELS = 5
 MONTHS = 12
 HOURS = [str(hour) for hour in range(24)]
 
@@ -150,11 +153,14 @@ class HeatmapPage(common.Page):
             figures.addWidget(stat)
         figures.addStretch(1)
         left.addLayout(figures)
-        self._day_models = common.label(
-            "", "body-medium", "on_surface_variant", wrap=True
+        self._day_models = QtWidgets.QVBoxLayout()
+        self._day_models.setSpacing(round(spacing.SPACE_2))
+        left.addLayout(self._day_models)
+        self._day_projects = common.label(
+            "", "body-small", "on_surface_variant", wrap=True
         )
-        self._day_models.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-        left.addWidget(self._day_models)
+        self._day_projects.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        left.addWidget(self._day_projects)
         left.addStretch(1)
         body.addLayout(left, 2)
         self._day_hours = dense_charts.DenseBarChart(show_legend=False)
@@ -242,9 +248,12 @@ class HeatmapPage(common.Page):
         summary = analytics.activity(values, start, end)
         totals = period.totals()
         self._calendar_card.set_subtitle(
-            f"{label}（{formatting.date_short(start)} – "
-            f"{formatting.date_short(end)}）按{metric.label}着色，"
-            "颜色越深用量越大"
+            formatting.join_cjk(
+                f"{label}（{formatting.date_short(start)} – "
+                f"{formatting.date_short(end)}）按",
+                metric.label,
+                "着色，颜色越深用量越大",
+            )
         )
         self._stat_current.set_value(f"{summary.current_streak} 天")
         longest = f"{summary.longest_streak} 天"
@@ -306,7 +315,8 @@ class HeatmapPage(common.Page):
             self._day_card.set_subtitle("点击日历中的任意一天查看")
             for stat in (self._day_tokens, self._day_requests, self._day_cost):
                 stat.set_value("—")
-            self._day_models.setText("")
+            common.clear_layout(self._day_models)
+            self._day_projects.setText("")
             self._day_hours.set_data(HOURS, [])
             return
         subset = self._day(day)
@@ -325,23 +335,37 @@ class HeatmapPage(common.Page):
         self._day_cost.set_value(
             formatting.money(totals.cost) if totals.priced else "未计价"
         )
-        lines = []
-        for group in subset.by_model()[:5]:
-            share = group.totals.total_tokens / max(1, totals.total_tokens)
-            lines.append(
-                f"{pricing.display_name(group.key or '')}："
-                f"{formatting.tokens(group.totals.total_tokens)}"
-                f"（{formatting.percent(share, 0)}）"
-            )
-        projects = [g.key or "—" for g in subset.by_project()[:4]]
-        if projects:
-            lines.append("项目：" + "、".join(projects))
-        self._day_models.setText("\n".join(lines) or "这一天没有用量")
+        self._show_day_models(subset, totals)
         hours = [0.0] * 24
         for record in subset.records:
             hours[record.timestamp.hour] += record.total_tokens
         self._day_hours.set_value_formatter(formatting.tokens)
         self._day_hours.set_data(HOURS, [charts.Series("Token", hours)])
+
+    def _show_day_models(
+        self, subset: analytics.Dataset, totals: analytics.Totals
+    ) -> None:
+        """各模型的用量占比条与当天涉及的项目。"""
+        common.clear_layout(self._day_models)
+        lines = []
+        for group in subset.by_model()[:DAY_MODELS]:
+            share = group.totals.total_tokens / max(1, totals.total_tokens)
+            lines.append(
+                quota_meter.QuotaLine(
+                    pricing.display_name(group.key or ""),
+                    share * 100,
+                    f"{formatting.tokens(group.totals.total_tokens)} · "
+                    f"{formatting.percent(share, 0)}",
+                )
+            )
+        meters = [quota_meter.QuotaMeter(role="primary") for _ in lines]
+        quota_meter.align(meters, lines)
+        for meter in meters:
+            self._day_models.addWidget(meter)
+        projects = [g.key or "—" for g in subset.by_project()[:4]]
+        self._day_projects.setText(
+            "项目：" + "、".join(projects) if projects else "这一天没有用量"
+        )
 
     def _update_week(
         self,

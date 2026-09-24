@@ -7,10 +7,10 @@
 
 from __future__ import annotations
 
-import dataclasses
 import datetime as dt
 import math
 import random
+import zlib
 
 from claude_status import models
 from claude_status import quota
@@ -244,6 +244,21 @@ def generate(
     return records
 
 
+def _demo_source(
+    account: models.Account, day: dt.date, hour: int
+) -> models.UsageSource:
+    """演示记录的来源：中转账号走第三方，订阅账号约三成来自 Desktop。
+
+    用哈希而不是随机数生成器决定，不影响其余演示数值。
+    """
+    if account.auth_type is models.AuthType.RELAY:
+        return models.UsageSource.THIRD_PARTY
+    if account.auth_type is models.AuthType.API_KEY:
+        return models.UsageSource.CODE
+    bucket = zlib.crc32(f"{account.id}{day}{hour}".encode()) % 10
+    return models.UsageSource.DESKTOP if bucket < 3 else models.UsageSource.CODE
+
+
 def _day_records(
     rng: random.Random,
     account: models.Account,
@@ -284,6 +299,7 @@ def _day_records(
                 project=_pick(rng, projects),
                 session_id=f"demo-{account.id[:6]}-{day.isoformat()}",
                 requests=max(1, math.ceil(tokens / _TOKENS_PER_REQUEST)),
+                source=_demo_source(account, day, hour),
                 **split,
             )
         )
@@ -313,13 +329,3 @@ def sample_quota(
         quota.Window(round(five), five_reset),
         quota.Window(round(week), week_reset),
     )
-
-
-def attribute(
-    records: list[models.UsageRecord], account_id: str | None
-) -> list[models.UsageRecord]:
-    """把一组记录归属到指定账号（本机日志使用）。"""
-    return [
-        dataclasses.replace(record, account_id=account_id)
-        for record in records
-    ]

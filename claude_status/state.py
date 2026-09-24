@@ -411,14 +411,16 @@ class AppState(QtCore.QObject):
             self._pending_refresh = False
             self.refresh()
 
+    def reattribute(self) -> None:
+        """账号身份或来源时间线变化后，重新归属本机用量。"""
+        if self.data_source is models.DataSource.LOCAL:
+            self._rebuild()
+
     def _rebuild(self) -> None:
         if self.data_source is models.DataSource.DEMO:
             records = demo_data.generate(self.accounts)
         else:
-            linked = self.linked_account()
-            records = demo_data.attribute(
-                self._local_records, linked.id if linked else None
-            )
+            records = self.clients.attributor().assign(self._local_records)
         self.dataset = analytics.Dataset(records, self.price_book())
         self.records_changed.emit()
 

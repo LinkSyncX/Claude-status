@@ -73,6 +73,20 @@ def project_name(cwd: object, fallback: str = "") -> str:
     return path.name or cwd
 
 
+def request_source(entrypoint: str, request_id: str) -> models.UsageSource:
+    """由日志的 ``entrypoint`` 与 ``requestId`` 判断请求来源。
+
+    ``entrypoint`` 区分客户端（``cli`` / ``claude-desktop`` /
+    ``claude-desktop-3p`` …）；官方服务的响应带有 ``req_`` 开头的请求 ID，
+    中转与第三方服务没有。
+    """
+    if entrypoint.endswith("-3p") or not request_id.startswith("req_"):
+        return models.UsageSource.THIRD_PARTY
+    if entrypoint.startswith("claude-desktop"):
+        return models.UsageSource.DESKTOP
+    return models.UsageSource.CODE
+
+
 def _int(value: object) -> int:
     try:
         return max(0, int(value))  # type: ignore[arg-type]
@@ -93,6 +107,7 @@ class _Entry:
     cache_read: int
     project: str
     session_id: str
+    source: str
 
     def merge(self, other: _Entry) -> None:
         self.timestamp = min(self.timestamp, other.timestamp)
@@ -113,6 +128,7 @@ class _Entry:
             cache_read=self.cache_read,
             project=self.project,
             session_id=self.session_id,
+            source=self.source,
         )
 
 
@@ -161,6 +177,9 @@ def parse_line(
         cache_read=_int(usage.get("cache_read_input_tokens")),
         project=project_name(obj.get("cwd"), fallback_project),
         session_id=str(obj.get("sessionId") or ""),
+        source=request_source(
+            str(obj.get("entrypoint") or ""), str(obj.get("requestId") or "")
+        ),
     )
     return key, entry
 

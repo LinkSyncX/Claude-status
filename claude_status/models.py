@@ -103,6 +103,31 @@ _STATUS_STYLES = {
 }
 
 
+class UsageSource(enum.StrEnum):
+    """本机用量的请求来源（按客户端与服务商区分，见 ``attribution``）。"""
+
+    CODE = "code"
+    DESKTOP = "desktop"
+    THIRD_PARTY = "third_party"
+
+    @property
+    def label(self) -> str:
+        """界面显示名称。"""
+        return _SOURCE_STYLES[self][0]
+
+    @property
+    def icon(self) -> str:
+        """来源图标。"""
+        return _SOURCE_STYLES[self][1]
+
+
+_SOURCE_STYLES = {
+    UsageSource.CODE: ("Claude Code", "terminal"),
+    UsageSource.DESKTOP: ("Claude Desktop", "desktop_windows"),
+    UsageSource.THIRD_PARTY: ("中转 / 第三方", "hub"),
+}
+
+
 def _now_iso() -> str:
     return dt.datetime.now().astimezone().isoformat(timespec="seconds")
 
@@ -257,6 +282,7 @@ class UsageRecord:
         project: 项目名称（工作目录名）。
         session_id: 会话标识。
         requests: 该记录代表的请求次数（演示数据按小时聚合）。
+        source: 请求来源（``UsageSource`` 的值），空字符串表示未知。
     """
 
     timestamp: dt.datetime
@@ -270,6 +296,7 @@ class UsageRecord:
     project: str = ""
     session_id: str = ""
     requests: int = 1
+    source: str = ""
 
     @property
     def cache_write(self) -> int:
@@ -338,6 +365,7 @@ class Settings:
         switch_desktop: 一键切换时是否同时切换 Claude Desktop。
         relaunch_desktop: 切换 Desktop 后是否自动重新启动它。
         desktop_account_id: Claude Desktop 当前会话所属的账号。
+        usage_sources: 本机用量各来源的身份时间线（见 ``attribution``）。
     """
 
     data_source: DataSource = DataSource.LOCAL
@@ -354,6 +382,9 @@ class Settings:
     switch_desktop: bool = True
     relaunch_desktop: bool = True
     desktop_account_id: str | None = None
+    usage_sources: list[dict[str, str]] = dataclasses.field(
+        default_factory=list
+    )
 
     def to_dict(self) -> dict[str, Any]:
         """转为可 JSON 序列化的字典。"""
@@ -373,6 +404,7 @@ class Settings:
             "switch_desktop": self.switch_desktop,
             "relaunch_desktop": self.relaunch_desktop,
             "desktop_account_id": self.desktop_account_id,
+            "usage_sources": list(self.usage_sources),
         }
 
     @classmethod
@@ -403,6 +435,13 @@ class Settings:
         settings.desktop_account_id = (
             desktop if isinstance(desktop, str) else None
         )
+        sources = data.get("usage_sources")
+        if isinstance(sources, list):
+            settings.usage_sources = [
+                {str(key): str(value) for key, value in item.items()}
+                for item in sources
+                if isinstance(item, dict)
+            ]
         return settings
 
 

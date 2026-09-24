@@ -242,6 +242,10 @@ class Dataset:
         """按项目分组。"""
         return self._group(lambda record: record.project or "（未知项目）")
 
+    def by_source(self) -> list[GroupStat]:
+        """按请求来源分组（key 为 ``UsageSource`` 的值，空字符串为未知）。"""
+        return self._group(lambda record: record.source)
+
     def by_account(self) -> list[GroupStat]:
         """按账号分组（key 为账号 ID，None 表示未归属）。"""
         return self._group(lambda record: record.account_id)

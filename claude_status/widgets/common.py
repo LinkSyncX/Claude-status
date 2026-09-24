@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import math
 from typing import override
 
 from PySide6 import QtCore
@@ -172,7 +173,11 @@ class SectionCard(cards.Card):
         subtitle: 标题下方的说明文字。
         variant: 卡片变体，默认描边卡片。
         parent: 父控件。
+        icon: 标题左侧的图标徽章（可选）。
+        icon_role: 图标徽章的颜色角色前缀。
     """
+
+    ICON_SIZE = 40.0
 
     def __init__(
         self,
@@ -180,6 +185,9 @@ class SectionCard(cards.Card):
         subtitle: str = "",
         variant: cards.CardVariant = cards.CardVariant.OUTLINED,
         parent: QtWidgets.QWidget | None = None,
+        *,
+        icon: icons.IconLike = None,
+        icon_role: str = "primary",
     ) -> None:
         super().__init__(variant, parent=parent)
         self.set_content_margins(
@@ -187,7 +195,13 @@ class SectionCard(cards.Card):
         )
         self.content_layout.setSpacing(round(spacing.SPACE_3))
         header = QtWidgets.QHBoxLayout()
-        header.setSpacing(round(spacing.SPACE_2))
+        header.setSpacing(round(spacing.SPACE_3))
+        self.icon_badge: IconBadge | None = None
+        if icon is not None:
+            self.icon_badge = IconBadge(icon, icon_role, self.ICON_SIZE)
+            header.addWidget(
+                self.icon_badge, 0, QtCore.Qt.AlignmentFlag.AlignTop
+            )
         titles = QtWidgets.QVBoxLayout()
         titles.setSpacing(2)
         self.title_label = typography.Label(title, "title-medium", "on_surface")
@@ -500,6 +514,43 @@ class InfoBanner(feedback.Banner):
     ) -> None:
         super().__init__(text, icon=icon, parent=parent)
         self._grid.setColumnStretch(1, 1)
+
+
+def indented(child: QtWidgets.QWidget, left: int) -> QtWidgets.QWidget:
+    """左侧缩进的容器。
+
+    换行的标签若用自身的内容边距缩进，换行宽度不含边距，右侧会被裁切；
+    放进带边距的布局则不会。
+    """
+    holder = QtWidgets.QWidget()
+    layout = QtWidgets.QHBoxLayout(holder)
+    layout.setContentsMargins(left, 0, 0, 0)
+    layout.addWidget(child)
+    return holder
+
+
+def fit_wrapped(label: QtWidgets.QLabel, width: int) -> None:
+    """给换行标签固定宽度，并按实际排版设置高度。
+
+    QLabel 按主字体（Roboto）的行距估算高度，而中文由回退字体绘制、行高
+    更大；在按提示尺寸布局的对话框里，最后一行会因此被裁掉一截。
+    """
+    label.setFixedWidth(width)
+    option = QtGui.QTextOption()
+    option.setWrapMode(QtGui.QTextOption.WrapMode.WordWrap)
+    layout = QtGui.QTextLayout(label.text(), label.font())
+    layout.setTextOption(option)
+    layout.beginLayout()
+    height = 0.0
+    while True:
+        line = layout.createLine()
+        if not line.isValid():
+            break
+        line.setLineWidth(width)
+        line.setPosition(QtCore.QPointF(0, height))
+        height += line.height()
+    layout.endLayout()
+    label.setMinimumHeight(max(label.heightForWidth(width), math.ceil(height)))
 
 
 def clear_layout(layout: QtWidgets.QLayout) -> None:
