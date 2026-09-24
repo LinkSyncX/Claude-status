@@ -161,7 +161,11 @@ class AccountsPage(common.Page):
         )
         self._quota_button.clicked.connect(self.refresh_quotas)
         add = buttons.FilledButton("新建账号", icon="person_add")
-        add.clicked.connect(self.create_account)
+        add.clicked.connect(
+            lambda: self.show_add_menu(
+                add.mapToGlobal(QtCore.QPoint(0, add.height()))
+            )
+        )
         more = buttons.IconButton("more_vert", tooltip="导入 / 导出")
         more.clicked.connect(
             lambda: self._tools_menu().popup(
@@ -187,7 +191,7 @@ class AccountsPage(common.Page):
         self._result_label = common.label(
             "", "body-small", "on_surface_variant"
         )
-        filter_row = QtWidgets.QHBoxLayout()
+        filter_row = common.FlushRow()  # 筛选标签与上方的卡片左对齐
         filter_row.addWidget(self._filters, 1)
         filter_row.addWidget(
             self._result_label, 0, QtCore.Qt.AlignmentFlag.AlignVCenter
@@ -458,8 +462,34 @@ class AccountsPage(common.Page):
             for a in self._state.accounts
         )
 
+    def show_add_menu(self, pos: QtCore.QPoint) -> None:
+        """“新建账号”菜单：在本工具中登录，或手动添加 API / 中转账号。"""
+        menu = menus.Menu(
+            [
+                menus.MenuItem("登录 Claude 账号…", "login", key="login"),
+                menus.MenuItem(
+                    "手动添加（API Key / 中转）…", "edit_note", key="manual"
+                ),
+            ],
+            parent=self,
+        )
+        # 延迟到菜单关闭之后再弹出模态对话框。
+        menu.triggered.connect(
+            lambda item: QtCore.QTimer.singleShot(
+                0, lambda: self._on_add(item.key)
+            )
+        )
+        menu.closed.connect(menu.deleteLater)
+        menu.popup(pos)
+
+    def _on_add(self, key: str) -> None:
+        if key == "login":
+            actions.login_account(self, self._state)
+        else:
+            self.create_account()
+
     def create_account(self) -> None:
-        """打开新建账号对话框。"""
+        """打开新建账号对话框（手动填写）。"""
         dialog = account_dialog.AccountDialog(
             None, self._state.all_tags(), self._duplicate_email, self.window()
         )
@@ -563,6 +593,14 @@ class AccountsPage(common.Page):
                 key=("switch_desktop", None),
             ),
         ]
+        if account.auth_type is models.AuthType.OAUTH:
+            items.append(
+                menus.MenuItem(
+                    "重新登录…" if info.code_saved else "登录…",
+                    "login",
+                    key=("login", None),
+                )
+            )
         if self._can_link_desktop(account):
             items.append(
                 menus.MenuItem(
@@ -644,6 +682,10 @@ class AccountsPage(common.Page):
             self.switch_account(account_id, code=False, desktop=True)
         elif action == "link_desktop":
             actions.link_desktop(self, self._state, account)
+        elif action == "login":
+            QtCore.QTimer.singleShot(
+                0, lambda: actions.login_account(self, self._state, account)
+            )
         elif action == "forget_code":
             actions.forget_login(self, self._state, account, desktop=False)
         elif action == "forget_desktop":
@@ -996,7 +1038,7 @@ class AccountsPage(common.Page):
             switch = buttons.FilledTonalButton("切换到此账号", icon="swap_horiz")
             switch.setToolTip(account_card.switch_description(code, desktop))
             switch.clicked.connect(lambda: self.switch_account(account.id))
-            layout.addLayout(common.row(switch, None))
+            layout.addLayout(common.row(switch, None, flush=True))
         if account.auth_type is models.AuthType.OAUTH:
             layout.addWidget(self._quota_card(account, info))
         layout.addWidget(self._usage_chart(account))

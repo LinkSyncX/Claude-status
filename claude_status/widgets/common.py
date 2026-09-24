@@ -146,13 +146,34 @@ class ElidedLabel(typography.Label):
             self._elide()
 
 
+# md3 的按钮、开关、分段按钮与筛选标签四周留有透明外边距（触控目标与焦点环）。
+CONTROL_INSET = round(widget.DEFAULT_OUTER_MARGIN)
+
+
+class FlushRow(QtWidgets.QHBoxLayout):
+    """首个控件的可见边缘与文字、输入框左对齐的横排布局。
+
+    md3 控件四周有透明外边距，直接放进布局时会比同一列的文字与输入框向右
+    缩进 ``CONTROL_INSET``。这里把整行向左移动同样的距离：落在卡片的内边距
+    里，焦点环不会被裁切。（Qt 布局不接受负边距，因此改写 ``setGeometry``。）
+    """
+
+    @override
+    def setGeometry(self, rect: QtCore.QRect) -> None:
+        super().setGeometry(rect.adjusted(-CONTROL_INSET, 0, 0, 0))
+
+
 def row(
     *widgets: QtWidgets.QWidget | int | None,
     spacing_px: int = round(spacing.SPACE_2),
     margins: tuple[int, int, int, int] = (0, 0, 0, 0),
+    flush: bool = False,
 ) -> QtWidgets.QHBoxLayout:
-    """横向排列控件；整数表示弹性空间的伸展系数，None 表示弹性空间。"""
-    layout = QtWidgets.QHBoxLayout()
+    """横向排列控件；整数表示弹性空间的伸展系数，None 表示弹性空间。
+
+    ``flush`` 为真时首个 md3 控件的可见边缘与左侧的文字对齐（见 ``FlushRow``）。
+    """
+    layout = FlushRow() if flush else QtWidgets.QHBoxLayout()
     layout.setContentsMargins(*margins)
     layout.setSpacing(spacing_px)
     for item in widgets:

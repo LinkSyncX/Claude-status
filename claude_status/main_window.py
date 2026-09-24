@@ -11,6 +11,7 @@ from PySide6 import QtWidgets
 import md3
 from md3.components import app_bars
 from md3.components import buttons
+from md3.components import dialogs
 from md3.components import navigation
 from md3.components import progress
 from md3.components import snackbar
@@ -20,6 +21,7 @@ from md3.theme import theme as theme_module
 import claude_status
 from claude_status import models
 from claude_status import state as state_module
+from claude_status import themes
 from claude_status.pages import accounts
 from claude_status.pages import clients
 from claude_status.pages import dashboard
@@ -35,7 +37,19 @@ _DESTINATIONS = {
     "heatmap": ("热力图", "calendar_month", "活跃热力图"),
     "settings": ("设置", "settings", "设置"),
 }
-_ACTION_REFRESH, _ACTION_THEME = 0, 1
+_ACTION_REFRESH, _ACTION_THEME, _ACTION_HELP = 0, 1, 2
+HELP_TEXT = (
+    "1. 添加账号：账号页“新建账号 → 登录 Claude 账号”，在浏览器中登录并授权后"
+    "自动保存，每个账号登录一次即可；中转 / API 账号选择“手动添加”。\n\n"
+    "2. 一键切换：点击账号卡片上的“切换”，Claude Code 立即改用该账号（之后新开的"
+    "会话生效，切换后的提示条中可以撤销）。切换前会自动备份当前配置，正在使用的"
+    "中转配置也会先保存为账号，随时可以切回。\n\n"
+    "3. Claude Desktop：Desktop 需要在它自己的窗口中登录。登录后到“客户端”页点击"
+    "“关联到账号…”，再“保存会话…”；之后一键切换时会一起切换（需要重启 "
+    "Desktop）。\n\n"
+    "4. 查看当前账号：账号卡片上的“Code 使用中 / Desktop 使用中”标签，或"
+    "“客户端”页。"
+)
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -63,7 +77,11 @@ class MainWindow(QtWidgets.QMainWindow):
             lowered=True,
             tooltip="新建账号",
         )
-        fab.clicked.connect(self._create_account)
+        fab.clicked.connect(
+            lambda: self._create_account(
+                fab.mapToGlobal(QtCore.QPoint(fab.width(), 0))
+            )
+        )
         self._rail = navigation.NavigationRail(
             [
                 navigation.Destination(label, icon, key=key)
@@ -85,6 +103,7 @@ class MainWindow(QtWidgets.QMainWindow):
             actions=[
                 app_bars.AppBarAction("refresh", "刷新数据"),
                 app_bars.AppBarAction("dark_mode", "切换深色模式"),
+                app_bars.AppBarAction("help", "如何切换账号"),
             ],
         )
         self._app_bar.action_triggered.connect(self._on_action)
@@ -121,6 +140,7 @@ class MainWindow(QtWidgets.QMainWindow):
         state.settings_changed.connect(self.apply_theme)
         state.accounts_changed.connect(self._update_badges)
         md3.theme_manager().theme_changed.connect(self._on_theme_changed)
+        self.apply_theme()
         self._on_theme_changed(md3.current_theme())
         self._update_badges()
         self.show_page("accounts")
@@ -155,11 +175,15 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_rail_changed(self, index: int) -> None:
         self.show_page(PAGE_KEYS[index])
 
-    def _create_account(self) -> None:
+    def _create_account(self, pos: QtCore.QPoint) -> None:
         self.show_page("accounts")
         page = self._pages["accounts"]
         assert isinstance(page, accounts.AccountsPage)
-        page.create_account()
+        page.show_add_menu(pos)
+
+    def show_help(self) -> None:
+        """使用说明：如何添加并切换账号。"""
+        dialogs.alert(self, "如何切换账号", HELP_TEXT, icon="help")
 
     def _update_badges(self) -> None:
         attention = sum(
@@ -185,15 +209,12 @@ class MainWindow(QtWidgets.QMainWindow):
             )
         elif index == _ACTION_THEME:
             self._state.update_settings(dark=not self._state.settings.dark)
+        elif index == _ACTION_HELP:
+            self.show_help()
 
     def apply_theme(self) -> None:
-        """按设置应用明暗模式与主题色。"""
-        settings = self._state.settings
-        current = md3.current_theme()
-        target = current.with_dark(settings.dark)
-        if theme_module.argb(QtGui.QColor(settings.seed)) != target.seed:
-            target = target.with_seed(settings.seed)
-        md3.set_theme(target)
+        """按设置应用界面风格、明暗模式与主题色（没有变化时不重绘）。"""
+        md3.set_theme(themes.build(self._state.settings, md3.current_theme()))
 
     def _on_theme_changed(self, theme: theme_module.Theme) -> None:
         buttons_ = self._app_bar.action_buttons

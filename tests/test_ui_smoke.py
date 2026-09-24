@@ -143,6 +143,26 @@ class UiSmokeTest(unittest.TestCase):
         heatmap._on_day_clicked(None)
         _pump()
 
+    def test_minimal_theme_from_settings(self):
+        settings_page = self.window.page("settings")
+        self.window.show_page("settings")
+        settings_page._style.set_selected([1])  # 极简白
+        _pump()
+        self.assertEqual(self.state.settings.theme_style, "minimal")
+        self.assertEqual(md3.current_theme().argb("surface") & 0xFFFFFF, 0xFFFFFF)
+        self.assertFalse(settings_page._seeds.isEnabled())
+        self.state.update_settings(dark=True)  # 极简黑
+        self.assertEqual(md3.current_theme().argb("surface") & 0xFFFFFF, 0x141414)
+        settings_page._style.set_selected([0])  # 回到 Material
+        _pump()
+        self.assertTrue(settings_page._seeds.isEnabled())
+        self.assertNotEqual(
+            md3.current_theme().argb("surface") & 0xFFFFFF, 0x141414
+        )
+        for key in main_window.PAGE_KEYS:
+            self.window.show_page(key)
+            _pump(50)
+
     def test_settings_changes(self):
         settings_page = self.window.page("settings")
         self.window.show_page("settings")

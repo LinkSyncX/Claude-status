@@ -43,8 +43,8 @@ CPA_AUTH_DIR = pathlib.Path.home() / ".cli-proxy-api"
 CPA_API_KEYS_NAME = "claude-api-key.yaml"
 _UNSAFE_FILE_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 NO_LOGIN_REASON = (
-    "没有 Claude Code 登录：在终端运行 claude /login 登录该账号，再到“客户端”页"
-    "保存后即可导出（Claude Desktop 的登录无法导出）"
+    "没有 Claude Code 登录：在账号菜单中选择“登录…”，在浏览器中登录后即可导出"
+    "（Claude Desktop 的登录无法导出）"
 )
 
 

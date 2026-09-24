@@ -71,7 +71,7 @@ class ExportersTest(fixtures.IsolatedClaudeTest):
         self.assertTrue(items["Bob"].live)
         self.assertEqual(items["Bob"].login.email, "bob@example.com")
         # 只登录过 Desktop 的账号没有可导出的令牌。
-        self.assertIn("claude /login", items["Desktop 账号"].reason)
+        self.assertIn("登录…", items["Desktop 账号"].reason)
         self.assertTrue(items["Relay"].exportable)
         self.assertIsNone(items["Relay"].login)
         self.assertFalse(items["空"].exportable)

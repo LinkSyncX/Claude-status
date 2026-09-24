@@ -515,6 +515,53 @@ class ClientManager(QtCore.QObject):
         self.refresh()
         return account, created
 
+    def add_login(
+        self,
+        login: code_config.CodeLogin,
+        target: models.Account | None = None,
+    ) -> tuple[models.Account, bool]:
+        """保存在本工具中完成的登录，返回 (账号, 是否新建)。
+
+        未指定账号时按 UUID / 邮箱找到对应账号，找不到则新建。这是一份独立的
+        登录（与 Claude Code 当前的登录互不影响），切换时写入 Claude Code。
+
+        Raises:
+            switcher.SwitchError: 指定的账号记录的是另一个 Claude 账号。
+        """
+        account = target or switcher_module.identify_code_account(
+            login, self.accounts
+        )
+        created = account is None
+        if account is None:
+            account = switcher_module.account_from_code_login(login)
+        elif (
+            account.claude_uuid
+            and login.account_uuid
+            and account.claude_uuid != login.account_uuid
+        ):
+            raise switcher_module.SwitchError(
+                f"登录的是 {login.email or '另一个账号'}，与「{account.display_name}」"
+                "记录的 Claude 账号不同"
+            )
+        switcher_module.learn_identity(account, login)
+        plan = switcher_module.plan_for_login(login)
+        if plan is not None:
+            account.plan = plan
+        account.organization = account.organization or str(
+            login.oauth_account.get("organizationName") or ""
+        )
+        if account.status is models.AccountStatus.EXPIRED:
+            account.status = models.AccountStatus.ACTIVE
+        self.vault.save_code(account.id, login)
+        self.quota_errors.pop(account.id, None)
+        if created:
+            if not any(a.link_local for a in self.accounts):
+                account.link_local = True
+            self._adopt([account])
+        self._state.accounts_modified()
+        self.refresh()
+        return account, created
+
     def import_provider_env(self) -> models.Account | None:
         """把当前的中转 / API 配置保存为账号（已存在时返回该账号）。"""
         if not self.provider_env:

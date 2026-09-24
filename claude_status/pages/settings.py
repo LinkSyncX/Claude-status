@@ -14,6 +14,7 @@ from md3.components import progress
 from md3.components import selection
 from md3.components import snackbar
 from md3.components import text_fields
+from md3.components.text_fields import text_field as md3_text_field
 from md3.tokens import spacing
 
 import claude_status
@@ -22,6 +23,7 @@ from claude_status import models
 from claude_status import pricing
 from claude_status import secure
 from claude_status import state as state_module
+from claude_status import themes
 from claude_status.widgets import common
 
 SEEDS: list[tuple[str, str]] = [
@@ -32,8 +34,9 @@ SEEDS: list[tuple[str, str]] = [
     ("琥珀金", "#8B5000"),
 ]
 _SOURCES = [models.DataSource.LOCAL, models.DataSource.DEMO]
-# 开关轨道加间距的宽度：开关下方的说明文字从这里开始。
-SWITCH_TEXT_INDENT = 62
+# 开关下方说明文字的缩进：开关的文字距控件左边缘 62 px，而开关所在的行已用
+# FlushRow 左移了控件外边距。
+SWITCH_TEXT_INDENT = 62 - common.CONTROL_INSET
 PRICE_COLUMNS = [
     ("input", "输入"),
     ("output", "输出"),
@@ -189,7 +192,7 @@ class SettingsPage(common.Page):
             selected=[0],
         )
         self._source.selection_changed.connect(self._on_source_changed)
-        card.content_layout.addLayout(common.row(self._source, None))
+        card.content_layout.addLayout(common.row(self._source, None, flush=True))
         self._directory = text_fields.OutlinedTextField(
             "日志目录",
             str(self._state.projects_dir),
@@ -203,11 +206,18 @@ class SettingsPage(common.Page):
         default.clicked.connect(
             lambda: self._state.update_settings(projects_dir="")
         )
+        # 按钮与输入框的框体（不含上方的浮动标签位与下方的辅助文字）垂直居中。
+        top = md3_text_field.LABEL_TOP_SPACE + (
+            md3_text_field.CONTAINER_HEIGHT - browse.sizeHint().height()
+        ) / 2
+        actions = QtWidgets.QVBoxLayout()
+        actions.setContentsMargins(0, round(top), 0, 0)
+        actions.addLayout(common.row(browse, default))
+        actions.addStretch(1)
         directory_row = QtWidgets.QHBoxLayout()
         directory_row.setSpacing(round(spacing.SPACE_2))
         directory_row.addWidget(self._directory, 1)
-        directory_row.addWidget(browse, 0, QtCore.Qt.AlignmentFlag.AlignTop)
-        directory_row.addWidget(default, 0, QtCore.Qt.AlignmentFlag.AlignTop)
+        directory_row.addLayout(actions)
         card.content_layout.addLayout(directory_row)
         self._rescan = buttons.FilledTonalButton("重新扫描", icon="refresh")
         self._rescan.clicked.connect(self._state.refresh)
@@ -218,7 +228,10 @@ class SettingsPage(common.Page):
             "", "body-small", "on_surface_variant", wrap=True, selectable=True
         )
         scan_row = common.row(
-            self._rescan, self._scan_progress, spacing_px=round(spacing.SPACE_3)
+            self._rescan,
+            self._scan_progress,
+            spacing_px=round(spacing.SPACE_3),
+            flush=True,
         )
         scan_row.addWidget(self._scan_label, 1)
         card.content_layout.addLayout(scan_row)
@@ -291,7 +304,9 @@ class SettingsPage(common.Page):
         self._switch_desktop.toggled.connect(
             lambda checked: self._state.update_settings(switch_desktop=checked)
         )
-        card.add_widget(self._switch_desktop)
+        card.content_layout.addLayout(
+            common.row(self._switch_desktop, None, flush=True)
+        )
         self._relaunch = selection.Switch(
             "切换后重新启动 Claude Desktop（切换前它正在运行时）",
             settings.relaunch_desktop,
@@ -299,14 +314,18 @@ class SettingsPage(common.Page):
         self._relaunch.toggled.connect(
             lambda checked: self._state.update_settings(relaunch_desktop=checked)
         )
-        card.add_widget(self._relaunch)
+        card.content_layout.addLayout(
+            common.row(self._relaunch, None, flush=True)
+        )
         self._quota_online = selection.Switch(
             "联网查询订阅额度", settings.quota_online
         )
         self._quota_online.toggled.connect(self._on_quota_online)
         offline = self._state.clients.offline
         self._quota_online.setEnabled(not offline)
-        card.add_widget(self._quota_online)
+        quota_group = QtWidgets.QVBoxLayout()
+        quota_group.setSpacing(0)
+        quota_group.addLayout(common.row(self._quota_online, None, flush=True))
         hint = common.label(
             "已通过 --offline 参数禁用联网。"
             if offline
@@ -317,8 +336,9 @@ class SettingsPage(common.Page):
             "on_surface_variant",
             wrap=True,
         )
-        # 与开关的文字对齐，而不是与开关本身对齐。
-        card.add_widget(common.indented(hint, SWITCH_TEXT_INDENT))
+        # 紧跟在开关下方，并与开关的文字（而不是开关本身）对齐。
+        quota_group.addWidget(common.indented(hint, SWITCH_TEXT_INDENT))
+        card.content_layout.addLayout(quota_group)
         self._proxy = text_fields.OutlinedTextField(
             "代理",
             settings.proxy,
@@ -351,13 +371,26 @@ class SettingsPage(common.Page):
 
     def _build_appearance(self) -> None:
         card = common.SectionCard(
-            "外观", "Material Design 3 动态配色", icon="palette"
+            "外观", "界面风格、明暗模式与主题色", icon="palette"
         )
-        self._dark = selection.Switch("深色模式", self._state.settings.dark)
+        settings = self._state.settings
+        card.add_widget(
+            common.label("界面风格", "label-large", "on_surface_variant")
+        )
+        self._style = buttons.SegmentedButton(
+            [
+                buttons.Segment(themes.LABELS[style], themes.ICONS[style])
+                for style in themes.STYLES
+            ],
+            selected=[themes.STYLES.index(settings.theme_style)],
+        )
+        self._style.selection_changed.connect(self._on_style_changed)
+        card.content_layout.addLayout(common.row(self._style, None, flush=True))
+        self._dark = selection.Switch("深色模式", settings.dark)
         self._dark.toggled.connect(
             lambda checked: self._state.update_settings(dark=checked)
         )
-        card.add_widget(self._dark)
+        card.content_layout.addLayout(common.row(self._dark, None, flush=True))
         card.add_widget(
             common.label("主题色", "label-large", "on_surface_variant")
         )
@@ -369,8 +402,19 @@ class SettingsPage(common.Page):
             single_selection=True,
         )
         self._seeds.selection_changed.connect(self._on_seed_changed)
-        card.add_widget(self._seeds)
+        card.content_layout.addLayout(common.row(self._seeds, None, flush=True))
+        self._seed_hint = common.label(
+            "极简白使用白色背景与黑白灰配色，不使用主题色；深色模式下为极简黑。",
+            "body-small",
+            "on_surface_variant",
+            wrap=True,
+        )
+        card.add_widget(self._seed_hint)
         self.body.addWidget(card)
+
+    def _on_style_changed(self, indices: list[int]) -> None:
+        if indices:
+            self._state.update_settings(theme_style=themes.STYLES[indices[0]])
 
     def _on_seed_changed(self, indices: list[int]) -> None:
         if indices:
@@ -491,7 +535,7 @@ class SettingsPage(common.Page):
         clear = buttons.TextButton("清空全部账号", icon="delete_forever")
         clear.clicked.connect(self._clear_accounts)
         card.content_layout.addLayout(
-            common.row(open_dir, samples, clear, None)
+            common.row(open_dir, samples, clear, None, flush=True)
         )
         card.add_widget(
             common.label(
@@ -566,6 +610,14 @@ class SettingsPage(common.Page):
                 switch.blockSignals(False)
         if self._proxy.text != settings.proxy and not self._proxy.editor.hasFocus():
             self._proxy.set_text(settings.proxy)
+        style = [themes.STYLES.index(settings.theme_style)]
+        if self._style.selected_indices != style:
+            self._style.blockSignals(True)
+            self._style.set_selected(style)
+            self._style.blockSignals(False)
+        material = settings.theme_style == themes.MATERIAL
+        self._seeds.setEnabled(material)
+        self._seed_hint.setVisible(not material)
         seed = settings.seed.lower()
         selected = [
             index

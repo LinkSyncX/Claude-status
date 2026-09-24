@@ -357,6 +357,7 @@ class Settings:
         projects_dir: 自定义 Claude Code 日志目录，空字符串使用默认位置。
         dark: 是否使用暗色主题。
         seed: 主题种子色。
+        theme_style: 界面风格（``themes.MATERIAL`` / ``themes.MINIMAL``）。
         active_account_id: 当前使用中的账号。
         custom_prices: 用户覆盖的模型单价。
         first_run: 是否尚未完成首次启动引导。
@@ -372,6 +373,7 @@ class Settings:
     projects_dir: str = ""
     dark: bool = False
     seed: str = "#D97757"
+    theme_style: str = "material"
     active_account_id: str | None = None
     custom_prices: dict[str, CustomPrice] = dataclasses.field(
         default_factory=dict
@@ -393,6 +395,7 @@ class Settings:
             "projects_dir": self.projects_dir,
             "dark": self.dark,
             "seed": self.seed,
+            "theme_style": self.theme_style,
             "active_account_id": self.active_account_id,
             "custom_prices": {
                 model: price.to_list()
@@ -419,6 +422,9 @@ class Settings:
         seed = data.get("seed")
         if isinstance(seed, str) and seed.startswith("#"):
             settings.seed = seed
+        style = data.get("theme_style")
+        if style in ("material", "minimal"):
+            settings.theme_style = style
         active = data.get("active_account_id")
         settings.active_account_id = active if isinstance(active, str) else None
         prices = data.get("custom_prices") or {}

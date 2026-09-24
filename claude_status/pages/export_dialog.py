@@ -78,7 +78,7 @@ def item_detail(item: exporters.ExportItem) -> str:
     if item.live:
         parts.append(
             "这是 Claude Code 正在使用的登录：代理续期后本机会掉线，"
-            "建议导出后在终端重新 claude /login 该账号并保存"
+            "建议导出后在本工具中重新登录该账号（账号菜单 → 登录…）"
         )
     return " · ".join(parts)
 

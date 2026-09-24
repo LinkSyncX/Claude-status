@@ -167,6 +167,7 @@ class DashboardPage(common.Page):
                 self._span_label,
                 self._accounts,
                 spacing_px=round(spacing.SPACE_3),
+                flush=True,
             )
         )
 

@@ -23,6 +23,7 @@ from claude_status import models
 from claude_status import state as state_module
 from claude_status import switcher
 from claude_status import tasks
+from claude_status.pages import login_dialog
 from claude_status.widgets import account_card
 
 QUIT_TIMEOUT = 8.0
@@ -176,6 +177,51 @@ def _alert(widget: QtWidgets.QWidget, headline: str, text: str) -> None:
     dialogs.alert(widget.window(), headline, text, icon="info")
 
 
+def login_account(
+    widget: QtWidgets.QWidget,
+    state: state_module.AppState,
+    target: models.Account | None = None,
+    announce: bool = True,
+) -> models.Account | None:
+    """在本工具中登录 Claude 账号（浏览器授权），返回保存到的账号。"""
+    if state.clients.offline:
+        _alert(widget, "无法登录", "已通过 --offline 参数禁用联网，登录需要联网。")
+        return None
+    dialog = login_dialog.LoginDialog(state, target, widget.window())
+    accepted = dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted
+    account = dialog.account if accepted else None
+    dialog.deleteLater()
+    if account is not None and announce:
+        verb = "已新建账号" if dialog.created else "已保存到"
+        snackbar.show(
+            widget,
+            f"登录成功，{verb}「{account.display_name}」；点击“切换”即可让 "
+            "Claude Code 使用它",
+            duration_ms=6000,
+        )
+    return account
+
+
+def _login_then_switch(
+    widget: QtWidgets.QWidget,
+    state: state_module.AppState,
+    account: models.Account,
+    code: bool | None,
+    desktop: bool | None,
+) -> None:
+    """订阅账号还没有 Claude Code 登录：征得同意后先登录，再继续切换。"""
+    if not dialogs.confirm(
+        widget.window(),
+        f"先登录「{account.display_name}」？",
+        "该账号还没有 Claude Code 登录。在浏览器中登录并授权后，会自动继续切换。",
+        confirm_text="登录并切换",
+        icon="login",
+    ):
+        return
+    if login_account(widget, state, account, announce=False) is not None:
+        switch_account(widget, state, account, code, desktop)
+
+
 def desktop_available() -> bool:
     """是否检测到 Claude Desktop（数据目录存在）。"""
     return claude_desktop.data_dir().is_dir()
@@ -202,6 +248,8 @@ def switch_account(
                 snackbar.show(
                     widget, f"「{account.display_name}」已是当前使用的账号"
                 )
+            elif account.auth_type is models.AuthType.OAUTH:
+                _login_then_switch(widget, state, account, None, None)
             else:
                 _ready, reason = clients.switcher.code_ready(
                     account, state.accounts
@@ -210,6 +258,9 @@ def switch_account(
             return
     code, desktop = bool(code), bool(desktop)
     if code and not info.code_ready:
+        if account.auth_type is models.AuthType.OAUTH:
+            _login_then_switch(widget, state, account, code, desktop)
+            return
         _ready, reason = clients.switcher.code_ready(account, state.accounts)
         _alert(widget, "无法切换 Claude Code", reason)
         return

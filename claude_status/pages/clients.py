@@ -13,7 +13,6 @@ from PySide6 import QtWidgets
 from md3.components import buttons
 from md3.components import charts
 from md3.components import dividers
-from md3.components import snackbar
 from md3.tokens import spacing
 
 from claude_status import analytics
@@ -31,7 +30,6 @@ from claude_status.widgets import common
 from claude_status.widgets import dense_charts
 from claude_status.widgets import quota_meter
 
-LOGIN_COMMAND = "claude /login"
 # 额度走势最多显示的采样数（Desktop 约每 15 分钟采样一次）。
 HISTORY_SAMPLES = 48
 USAGE_DAYS = 30
@@ -252,14 +250,16 @@ class ClientsPage(common.Page):
         subtitle: str,
         current: bool,
         action: QtWidgets.QWidget | None,
-        forget: QtWidgets.QWidget | None,
+        icons: list[QtWidgets.QWidget | None],
     ) -> QtWidgets.QWidget:
+        """账号行：尾部为 状态 / 切换 与若干图标按钮列（空位保留，各行对齐）。"""
         status = common.Pill("使用中", "primary_solid", "check") if current else action
         return _list_row(
             account_card.account_avatar(account, 36),
             account.display_name,
             subtitle,
-            [_fixed(status, STATUS_COLUMN), _fixed(forget, ICON_COLUMN)],
+            [_fixed(status, STATUS_COLUMN)]
+            + [_fixed(icon, ICON_COLUMN) for icon in icons],
         )
 
     def _switch_button(
@@ -304,7 +304,7 @@ class ClientsPage(common.Page):
         clients = self._state.clients
         login = clients.code_login
         if login is None:
-            return f"未登录（在终端运行 {LOGIN_COMMAND} 登录）"
+            return "未登录（可以在本工具中登录账号，再切换过来）"
         parts = [
             login.email or "未知邮箱",
             login.subscription_type.capitalize() or "未知套餐",
@@ -367,9 +367,14 @@ class ClientsPage(common.Page):
                 ]
             )
         )
-        save = buttons.FilledTonalButton("保存当前登录", icon="save")
+        login = buttons.FilledTonalButton("登录账号…", icon="login")
+        login.setToolTip("在浏览器中登录 Claude 账号并保存，之后可以一键切换")
+        login.clicked.connect(lambda: actions.login_account(self, self._state))
+        save = buttons.OutlinedButton("保存当前登录", icon="save")
         save.setEnabled(clients.code_login is not None)
-        save.setToolTip("把当前的订阅登录保存到对应账号（没有时新建账号）")
+        save.setToolTip(
+            "把 Claude Code 当前的订阅登录保存到对应账号（没有时新建账号）"
+        )
         save.clicked.connect(lambda: actions.capture_code(self, self._state))
         import_env = buttons.OutlinedButton("保存中转配置为账号", icon="hub")
         import_env.setEnabled(
@@ -378,12 +383,7 @@ class ClientsPage(common.Page):
         import_env.clicked.connect(
             lambda: actions.import_provider_env(self, self._state)
         )
-        copy = buttons.TextButton("复制登录命令", icon="content_copy")
-        copy.setToolTip(
-            f"添加账号：在终端运行 {LOGIN_COMMAND} 登录后，点击“保存当前登录”"
-        )
-        copy.clicked.connect(self._copy_login_command)
-        layout.addLayout(common.row(save, import_env, copy, None))
+        layout.addLayout(common.row(login, save, import_env, None, flush=True))
         layout.addWidget(dividers.Divider())
         layout.addWidget(_section_title("可切换的账号"))
         rows = [self._code_row(account) for account in self._state.accounts]
@@ -393,8 +393,8 @@ class ClientsPage(common.Page):
         if not rows:
             layout.addWidget(
                 _hint(
-                    "还没有可切换的账号：点击“保存当前登录”保存订阅登录，或在"
-                    "账号页为中转 / API 账号填写 Base URL 与密钥。"
+                    "还没有可切换的账号：点击“登录账号…”在本工具中登录，或在"
+                    "账号页手动添加中转 / API 账号。"
                 )
             )
         return content
@@ -422,21 +422,19 @@ class ClientsPage(common.Page):
         switch = None
         if info.code_ready and not info.code_current:
             switch = self._switch_button(account, True, False)
+        relogin = None
+        if account.auth_type is models.AuthType.OAUTH:
+            relogin = buttons.IconButton("login", tooltip="重新登录")
+            relogin.clicked.connect(
+                lambda: actions.login_account(self, self._state, account)
+            )
         forget = (
             self._forget_button(account, desktop=False)
             if info.code_saved
             else None
         )
         return self._account_row(
-            account, subtitle, info.code_current, switch, forget
-        )
-
-    def _copy_login_command(self) -> None:
-        QtGui.QGuiApplication.clipboard().setText(LOGIN_COMMAND)
-        snackbar.show(
-            self,
-            f"已复制 {LOGIN_COMMAND}：在终端运行并登录后，回到这里点击“保存当前登录”",
-            duration_ms=6000,
+            account, subtitle, info.code_current, switch, [relogin, forget]
         )
 
     # ---- Claude Desktop ---------------------------------------------------
@@ -492,7 +490,7 @@ class ClientsPage(common.Page):
                     subtitle,
                     is_current,
                     switch,
-                    self._forget_button(account, desktop=True),
+                    [self._forget_button(account, desktop=True)],
                 )
             )
             rows += 1
@@ -570,7 +568,7 @@ class ClientsPage(common.Page):
                 lambda: actions.launch_desktop(self, self._state)
             )
         widgets += [toggle, None]
-        return common.row(*widgets)
+        return common.row(*widgets, flush=True)
 
     def _add_usage_history(
         self,

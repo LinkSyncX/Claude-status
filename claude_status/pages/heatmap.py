@@ -102,7 +102,7 @@ class HeatmapPage(common.Page):
         self._metric.selection_changed.connect(lambda _i: self.refresh())
         self._accounts = dashboard.AccountFilter(self._state)
         self._accounts.selection_changed.connect(lambda _i: self.refresh())
-        controls = QtWidgets.QHBoxLayout()
+        controls = common.FlushRow()  # 分段按钮与下方卡片左对齐
         controls.setSpacing(round(spacing.SPACE_3))
         controls.addLayout(self._period_slot)
         controls.addWidget(self._metric)

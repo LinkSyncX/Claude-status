@@ -306,13 +306,15 @@ def make_opener(proxy: str = "") -> Opener:
     return lambda request, timeout: opener.open(request, timeout=timeout)
 
 
-def _user_agent() -> str:
+def user_agent() -> str:
+    """请求使用的 User-Agent。"""
     return f"claude-status/{claude_status.__version__}"
 
 
-def _request_json(
+def request_json(
     opener: Opener, request: urllib.request.Request
 ) -> dict[str, Any]:
+    """发送请求并解析 JSON 对象；错误统一转换为 ``QuotaError``。"""
     try:
         with opener(request, TIMEOUT) as response:
             body = response.read()
@@ -349,10 +351,10 @@ def fetch_usage(
             "Authorization": f"Bearer {access_token}",
             "anthropic-beta": OAUTH_BETA,
             "Content-Type": "application/json",
-            "User-Agent": _user_agent(),
+            "User-Agent": user_agent(),
         },
     )
-    return _request_json(opener or make_opener(), request)
+    return request_json(opener or make_opener(), request)
 
 
 def refresh_oauth(
@@ -383,10 +385,10 @@ def refresh_oauth(
         method="POST",
         headers={
             "Content-Type": "application/json",
-            "User-Agent": _user_agent(),
+            "User-Agent": user_agent(),
         },
     )
-    data = _request_json(opener or make_opener(), request)
+    data = request_json(opener or make_opener(), request)
     access = data.get("access_token")
     if not isinstance(access, str) or not access:
         raise QuotaError("format", "令牌刷新响应中没有访问令牌")

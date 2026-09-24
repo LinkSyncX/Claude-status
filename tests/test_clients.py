@@ -305,7 +305,7 @@ class SwitcherTest(fixtures.IsolatedClaudeTest):
         self.login_code("alice")
         ready, reason = self.switcher.code_ready(self.bob, self.accounts)
         self.assertFalse(ready)
-        self.assertIn("claude /login", reason)
+        self.assertIn("登录…", reason)
         with self.assertRaises(switcher_module.SwitchError):
             self.switcher.switch_code(self.bob, self.accounts)
         self.assertEqual(list((self.data_dir / "backups").glob("*")), [])

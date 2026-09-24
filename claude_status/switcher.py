@@ -83,11 +83,18 @@ def identify_desktop_account(
     )
 
 
+def plan_for_login(login: code_config.CodeLogin) -> models.Plan | None:
+    """订阅登录对应的套餐；Max 按速率档位区分 5x / 20x，未知时返回 None。"""
+    plan = _PLAN_BY_SUBSCRIPTION.get(login.subscription_type.lower())
+    tier = str(login.oauth.get("rateLimitTier") or "")
+    if plan is models.Plan.MAX_5X and "20x" in tier:
+        return models.Plan.MAX_20X
+    return plan
+
+
 def account_from_code_login(login: code_config.CodeLogin) -> models.Account:
     """由订阅登录新建账号。"""
-    plan = _PLAN_BY_SUBSCRIPTION.get(
-        login.subscription_type.lower(), models.Plan.PRO
-    )
+    plan = plan_for_login(login) or models.Plan.PRO
     return models.Account(
         name=login.display_name or login.email.split("@")[0] or "Claude 账号",
         email=login.email,
@@ -186,8 +193,8 @@ class Switcher:
             if identify_code_account(live, accounts) is target:
                 return True, ""
             return False, (
-                "该账号还没有保存 Claude Code 登录：请先在 Claude Code 中登录"
-                "该账号（claude /login），再在“客户端”页点击“保存当前登录”"
+                "该账号还没有 Claude Code 登录：在账号菜单中选择“登录…”，"
+                "在浏览器中登录该账号即可"
             )
         if not (target.base_url or target.api_key):
             return False, "该账号没有填写 Base URL 或密钥"

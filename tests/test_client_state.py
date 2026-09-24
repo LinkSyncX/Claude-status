@@ -297,13 +297,34 @@ class SwitchFlowTest(fixtures.IsolatedClaudeTest):
         self.assertEqual(code_config.read_provider_env(), {})
         self.assertEqual(self.settings()["model"], "opus")
 
-    def test_oauth_without_saved_login_explains(self):
+    def test_oauth_without_login_offers_to_log_in_first(self):
         other = models.Account(name="Other", email="other@example.com")
         self.state.add_account(other)
-        with mock.patch.object(dialogs, "alert") as alert:
+        # 拒绝登录：什么都不改变。
+        with mock.patch.object(dialogs, "confirm", return_value=False) as confirm:
             actions.switch_account(self.page, self.state, other)
-        alert.assert_called_once()
+        confirm.assert_called_once()
         self.assertEqual(self.live_email(), "alice@example.com")
+
+    def test_login_then_switch(self):
+        other = models.Account(name="Other", email="other@example.com")
+        self.state.add_account(other)
+
+        def fake_login(_widget, state, target, announce=True):
+            login = code_config.CodeLogin(
+                {"claudeAiOauth": fixtures.oauth("other")},
+                fixtures.oauth_account("other"),
+            )
+            return state.clients.add_login(login, target)[0]
+
+        with (
+            mock.patch.object(dialogs, "confirm", return_value=True),
+            mock.patch.object(actions, "login_account", side_effect=fake_login),
+        ):
+            actions.switch_account(self.page, self.state, other)
+        self.assertEqual(self.live_email(), "other@example.com")
+        self.assertEqual(other.claude_uuid, "uuid-other")
+        self.assertIs(self.state.clients.current_code_account(), other)
 
     def test_desktop_capture_quits_and_relaunches(self):
         self.login_desktop("alice")
