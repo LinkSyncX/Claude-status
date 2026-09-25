@@ -1,0 +1,199 @@
+# 持续集成与发布（使用说明见 README 的“持续集成与发布”一节）：
+#
+# 1. 测试：在 Windows、Linux 与 macOS 上运行全部测试。
+# 2. 打包：测试通过后，在 6 个平台上分别用 build.py 打包并启动检查，产物上传
+#    到本次运行，可在运行页面底部下载。PyInstaller 不能交叉编译，每个平台都在
+#    对应系统的机器上构建。
+# 3. 发布：推送 v 开头的标签（如 v0.2.0）时，把各平台的程序与校验和发布到对应
+#    的 Release。标签必须与 claude_status/__init__.py 中的 __version__ 一致。
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+    # 只改文档不触发（标签不受影响：推送标签时不检查路径）。
+    paths-ignore: ["**.md", "docs/**", ".idea/**"]
+  pull_request:
+    paths-ignore: ["**.md", "docs/**", ".idea/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 同一分支有新的推送时，取消还在进行的旧运行；发布（标签）不取消。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  PYTHON_VERSION: "3.14"
+  # 测试与构建脚本输出中文；Windows 机器默认的 cp1252 编码无法输出。
+  PYTHONUTF8: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  test:
+    name: 测试 · ${{ matrix.os }}
+    # 本仓库分支上的 PR 已经由推送触发的运行测试并打包，这里只处理 fork 的 PR。
+    if: >-
+      github.event_name != 'pull_request'
+      || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # 固定 Ubuntu 版本：latest 升级时 Qt 依赖的系统库包名可能变化。
+        os: [windows-latest, ubuntu-24.04, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: 安装 Qt 需要的系统库
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon0 \
+            libxkbcommon-x11-0 libxcb-cursor0 libfontconfig1 libdbus-1-3
+
+      # 包含 PyInstaller：打包相关的测试需要它。
+      - name: 安装依赖
+        run: python -m pip install -r requirements-build.txt
+
+      - name: 运行测试
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m unittest discover -s tests -t .
+
+  build:
+    name: 打包 · ${{ matrix.artifact }}
+    needs: test
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: ClaudeStatus-windows-x64
+          - os: windows-11-arm
+            artifact: ClaudeStatus-windows-arm64
+          # 在较旧的系统上构建，程序能在更多发行版上运行（glibc 2.35+）。
+          - os: ubuntu-22.04
+            artifact: ClaudeStatus-linux-x64
+          # PySide6 的 ARM64 Linux 版要求 glibc 2.39+，需要 Ubuntu 24.04。
+          - os: ubuntu-24.04-arm
+            artifact: ClaudeStatus-linux-arm64
+          - os: macos-latest
+            artifact: ClaudeStatus-macos-arm64
+          - os: macos-15-intel
+            artifact: ClaudeStatus-macos-x64
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: 安装 Qt 需要的系统库
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon0 \
+            libxkbcommon-x11-0 libxcb-cursor0 libfontconfig1 libdbus-1-3
+
+      - name: 安装依赖
+        run: python -m pip install -r requirements-build.txt
+
+      # build.py 构建后会用演示数据在后台启动程序，渲染全部页面作为检查。
+      - name: 打包并检查
+        run: python build.py
+
+      - name: 整理产物
+        shell: bash
+        env:
+          ARTIFACT: ${{ matrix.artifact }}
+        run: |
+          mkdir out
+          case "$RUNNER_OS" in
+            Windows)
+              cp dist/ClaudeStatus.exe "out/$ARTIFACT.exe" ;;
+            Linux)
+              tar -czf "out/$ARTIFACT.tar.gz" -C dist claude-status ;;
+            macOS)
+              ditto -c -k --sequesterRsrc --keepParent \
+                "dist/Claude Status.app" "out/$ARTIFACT.zip" ;;
+          esac
+
+      # 直接上传这个文件（不再套一层 zip），下载后即可使用。
+      - uses: actions/upload-artifact@v7
+        with:
+          path: out/*
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: 发布到 Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 检查版本号
+        id: version
+        run: |
+          version=$(python3 -c "import claude_status; print(claude_status.__version__)")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::标签 $GITHUB_REF_NAME 与 claude_status/__init__.py 中的版本 $version 不一致"
+            exit 1
+          fi
+          # 只由数字组成的版本（如 0.2.0）是正式版，其余（如 0.2.0rc1）为预发布。
+          if [[ "$version" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: 生成校验和
+        working-directory: release
+        run: sha256sum ClaudeStatus-* > SHA256SUMS.txt
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          name: Claude Status ${{ github.ref_name }}
+          prerelease: ${{ steps.version.outputs.prerelease }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: release/*
+          body: |
+            ## 下载
+
+            运行时不需要安装 Python：
+
+            | 系统 | 文件 |
+            | --- | --- |
+            | Windows 10 / 11（x64） | `ClaudeStatus-windows-x64.exe` |
+            | Windows 11（ARM64） | `ClaudeStatus-windows-arm64.exe` |
+            | macOS 13 及以上（Apple 芯片） | `ClaudeStatus-macos-arm64.zip` |
+            | macOS 13 及以上（Intel） | `ClaudeStatus-macos-x64.zip` |
+            | Linux（x64，glibc 2.35+） | `ClaudeStatus-linux-x64.tar.gz` |
+            | Linux（ARM64，glibc 2.39+） | `ClaudeStatus-linux-arm64.tar.gz` |
+
+            程序没有代码签名，首次运行时的提示与处理方法见 [README](${{ github.server_url }}/${{ github.repository }}#下载程序)。`SHA256SUMS.txt` 可用来校验下载的文件。

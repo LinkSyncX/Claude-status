@@ -1,9 +1,20 @@
 # Claude Status · Claude 账号管理与用量统计
 
+[![CI](https://github.com/LinkSyncX/Claude-status/actions/workflows/ci.yml/badge.svg)](https://github.com/LinkSyncX/Claude-status/actions/workflows/ci.yml)
+[![最新版本](https://img.shields.io/github/v/release/LinkSyncX/Claude-status?include_prereleases&label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC)](https://github.com/LinkSyncX/Claude-status/releases)
+
 基于本仓库的 `md3`（PySide6 Material Design 3 组件库）构建的桌面工具：
 管理多个 Claude 账号，一键切换 Claude Code 与 Claude Desktop 的登录，查看各
 账号的 5 小时与每周额度，并从本机 Claude Code 日志统计 token 用量、估算费用、
-绘制活跃热力图。
+绘制活跃热力图。提供 Windows、macOS 与 Linux 版本。
+
+![账号管理](docs/screenshots/accounts.png)
+
+| 数据统计 | 活跃热力图 |
+| --- | --- |
+| ![数据统计](docs/screenshots/dashboard.png) | ![活跃热力图](docs/screenshots/heatmap.png) |
+
+<sub>截图使用演示数据（`--demo`）。</sub>
 
 ## 功能
 
@@ -38,14 +49,57 @@
   重启 Desktop、是否联网查询额度、代理）；界面风格（Material 动态配色 / 极简白）、
   深色模式与主题色；模型单价表与自定义单价；数据目录管理。
 
-## 运行
+## 安装与运行
+
+### 下载程序
+
+各平台的程序由 GitHub Actions 自动构建，运行时不需要安装 Python。从
+[Releases](https://github.com/LinkSyncX/Claude-status/releases) 下载最新版本：
+
+| 系统 | 下载 | 说明 |
+| --- | --- | --- |
+| Windows 10 / 11（x64） | [ClaudeStatus-windows-x64.exe][win-x64] | 单个 exe（约 35 MB），双击运行，没有控制台窗口 |
+| Windows 11（ARM64） | [ClaudeStatus-windows-arm64.exe][win-arm64] | 骁龙等 ARM 处理器的设备 |
+| macOS 13 及以上（Apple 芯片） | [ClaudeStatus-macos-arm64.zip][mac-arm64] | 解压得到 `Claude Status.app` |
+| macOS 13 及以上（Intel） | [ClaudeStatus-macos-x64.zip][mac-x64] | 同上 |
+| Linux（x64） | [ClaudeStatus-linux-x64.tar.gz][linux-x64] | 解压后运行 `./claude-status`；需要 glibc 2.35+（Ubuntu 22.04、Debian 12 及以上） |
+| Linux（ARM64） | [ClaudeStatus-linux-arm64.tar.gz][linux-arm64] | 同上；需要 glibc 2.39+（Ubuntu 24.04、Debian 13 及以上） |
+
+[win-x64]: https://github.com/LinkSyncX/Claude-status/releases/latest/download/ClaudeStatus-windows-x64.exe
+[win-arm64]: https://github.com/LinkSyncX/Claude-status/releases/latest/download/ClaudeStatus-windows-arm64.exe
+[mac-arm64]: https://github.com/LinkSyncX/Claude-status/releases/latest/download/ClaudeStatus-macos-arm64.zip
+[mac-x64]: https://github.com/LinkSyncX/Claude-status/releases/latest/download/ClaudeStatus-macos-x64.zip
+[linux-x64]: https://github.com/LinkSyncX/Claude-status/releases/latest/download/ClaudeStatus-linux-x64.tar.gz
+[linux-arm64]: https://github.com/LinkSyncX/Claude-status/releases/latest/download/ClaudeStatus-linux-arm64.tar.gz
+
+每个版本都附带 `SHA256SUMS.txt`，可用来校验下载的文件。想试用还没有发布的最新
+代码，可以在 [Actions](https://github.com/LinkSyncX/Claude-status/actions/workflows/ci.yml?query=branch%3Amain+is%3Asuccess)
+中打开最近一次成功的运行，在页面底部下载（需要登录 GitHub）。
+
+几点说明：
+
+- 程序没有代码签名。从网上下载后首次运行时，Windows 可能提示“Windows 已保护
+  你的电脑”，点“更多信息 → 仍要运行”；macOS 会拦截打开，可在“系统设置 →
+  隐私与安全性”中点“仍要打开”。
+- Linux 版需要图形桌面环境。Qt 依赖 `libxcb-cursor0` 等系统库，启动报 xcb
+  相关错误时安装即可（Ubuntu / Debian：`sudo apt install libxcb-cursor0`）。
+- Windows 以外的系统没有 DPAPI，保存的登录以带标记的明文存放在数据目录中
+  （设置页会提示）。macOS 上 Claude Code 的订阅凭据保存在钥匙串中，暂不支持
+  切换（见[数据存储与安全](#数据存储与安全)）。
+
+### 从源码运行
+
+推荐使用 Python 3.14（发布版与 CI 使用的版本）：
 
 ```bash
 pip install -r requirements.txt
 python main.py
 ```
 
-常用参数（`python main.py --help` 查看全部）：
+### 命令行参数
+
+打包后的程序与 `python main.py` 的参数相同（`--help` 查看全部），数据目录也
+相同，两种运行方式可以混用。常用参数：
 
 | 参数 | 说明 |
 | --- | --- |
@@ -55,50 +109,6 @@ python main.py
 | `--data-dir DIR` | 使用指定的配置目录（便于试用而不影响正式数据） |
 | `--page clients` | 启动后直接打开某个页面（accounts / clients / dashboard / heatmap / settings） |
 | `--screenshot DIR` | 不显示窗口，把每个页面渲染为 PNG 后退出（总是离线） |
-
-也可以打包成不需要安装 Python 的独立程序，见下一节。
-
-## 打包为可执行程序
-
-```bash
-pip install -r requirements-build.txt
-python build.py
-```
-
-| 系统 | 生成的程序（`dist/` 下） | 说明 |
-| --- | --- | --- |
-| Windows | `ClaudeStatus.exe` | 单个 exe（约 35 MB），双击运行，没有控制台窗口 |
-| Linux | `claude-status` | 单个可执行文件 |
-| macOS | `Claude Status.app` | 应用包 |
-
-- `python build.py --onedir`：生成目录而不是单个文件。单文件程序每次启动都要
-  先解压到临时目录，目录形式启动更快。
-- `python build.py --console`：保留控制台窗口，程序出错时能看到报错信息。
-- 构建完成后，脚本会用演示数据在后台启动一次程序、渲染全部页面，确认程序可用。
-- 构建定义在 `ClaudeStatus.spec` 中，熟悉 PyInstaller 的话也可以直接运行
-  `pyinstaller ClaudeStatus.spec`。Windows 版去掉了本程序用不到的 Qt 组件
-  （软件 OpenGL、虚拟键盘及其带入的 Qt Quick / QML、PDF 插件、网络 TLS 插件与
-  翻译文件），体积小了约四成，单文件版启动也更快。
-- 程序的命令行参数与 `python main.py` 相同；数据目录也相同，两种运行方式可以
-  混用。
-
-PyInstaller 不能交叉编译，在 Windows 上只能打包出 Windows 程序。其他平台的
-程序可以在对应系统上运行上面的命令，也可以把仓库推送到 GitHub，用 Actions
-生成：在仓库的 Actions 页面手动运行“打包”工作流（`.github/workflows/build.yml`），
-它会在 Windows、Linux 与 macOS（Apple 芯片与 Intel）上分别打包，完成后在运行
-页面底部下载；推送 `v` 开头的标签（如 `v0.1.0`）时，还会把各平台的程序发布到
-对应的 Release。
-
-几点说明：
-
-- 程序没有代码签名。从网上下载后首次运行时，Windows 可能提示“Windows 已保护
-  你的电脑”，点“更多信息 → 仍要运行”；macOS 会拦截打开，可在“系统设置 →
-  隐私与安全性”中点“仍要打开”。
-- Linux 版需要图形桌面环境。Qt 依赖 `libxcb-cursor0` 等系统库，启动报 xcb
-  相关错误时安装即可（Ubuntu / Debian：`sudo apt install libxcb-cursor0`）。
-  Actions 在 Ubuntu 22.04 上构建，生成的程序可在 glibc 2.35 及以上的发行版运行。
-- Windows 以外的系统没有 DPAPI，保存的登录以带标记的明文存放在数据目录中
-  （设置页会提示）。
 
 ## 添加账号并切换
 
@@ -236,7 +246,67 @@ Claude Desktop 的数据目录：Microsoft Store 版为
 `claude.exe`，本工具不会结束它们。macOS 上的 Claude Code 订阅凭据保存在钥匙串
 中，暂不支持切换。
 
-## 项目结构
+## 开发
+
+### 测试
+
+```bash
+python -m unittest discover -s tests -t .
+```
+
+测试使用 Qt 的 offscreen 平台，不需要显示器。Claude Code 配置、Desktop 数据
+目录与进程列表全部指向临时目录中的假数据，不会联网，也不会改动或结束本机
+真实的 Claude Code / Claude Desktop。每次推送后，CI 会在 Windows、Linux 与
+macOS 上自动运行全部测试。
+
+### 本地打包
+
+```bash
+pip install -r requirements-build.txt
+python build.py
+```
+
+生成的程序在 `dist/` 下：Windows 为 `ClaudeStatus.exe`，Linux 为
+`claude-status`，macOS 为 `Claude Status.app`。PyInstaller 不能交叉编译，在
+哪个系统上构建就得到哪个系统的程序；发布版由 CI 在各平台上分别构建（见下一节）。
+
+- `python build.py --onedir`：生成目录而不是单个文件。单文件程序每次启动都要
+  先解压到临时目录，目录形式启动更快。
+- `python build.py --console`：保留控制台窗口，程序出错时能看到报错信息。
+- 构建完成后，脚本会用演示数据在后台启动一次程序、渲染全部页面，确认程序可用。
+- 构建定义在 `ClaudeStatus.spec` 中，熟悉 PyInstaller 的话也可以直接运行
+  `pyinstaller ClaudeStatus.spec`。Windows 版去掉了本程序用不到的 Qt 组件
+  （软件 OpenGL、虚拟键盘及其带入的 Qt Quick / QML、PDF 插件、网络 TLS 插件与
+  翻译文件），体积小了约四成，单文件版启动也更快。
+
+### 持续集成与发布
+
+GitHub Actions 流水线定义在 `.github/workflows/ci.yml`：
+
+| 触发 | 执行 |
+| --- | --- |
+| 推送到任意分支，或 fork 发来的 PR | 在 Windows、Linux 与 macOS 上运行测试；全部通过后在[下载程序](#下载程序)表中的 6 个平台上分别打包，并用演示数据启动检查。产物可在运行页面底部下载，保留 30 天 |
+| 推送 `v` 开头的标签 | 同上，然后把各平台的程序与 `SHA256SUMS.txt` 发布到对应的 Release，并附上自动生成的更新说明 |
+| 在 Actions 页面手动运行 | 同推送到分支 |
+
+只修改文档（`*.md`、`docs/`）的推送不会触发流水线；同一分支上有新的推送时，
+还在进行的旧运行会被取消。
+
+发布新版本：
+
+1. 把 `claude_status/__init__.py` 中的 `__version__` 改为新版本号（如
+   `0.2.0`），提交并推送。
+2. 打上 `v` 加版本号的标签并推送：
+
+   ```bash
+   git tag v0.2.0
+   git push origin v0.2.0
+   ```
+
+3. 流水线完成后，Release 页面会出现各平台的程序。标签与 `__version__` 不一致
+   时不会发布；版本号带字母的（如 `0.2.0rc1`）会标记为预发布。
+
+### 项目结构
 
 ```
 claude_status/
@@ -266,38 +336,9 @@ claude_status/
   pages/              账号、客户端、统计、热力图、设置页面，账号对话框与切换编排
   widgets/            账号卡片、额度条、日历热力图、统计卡片、稀疏坐标轴图表等
 tests/                单元测试与界面测试
+docs/screenshots/     README 中的截图（演示数据，用 --screenshot 生成）
 main.py               启动脚本
 build.py              打包为可执行程序：检查环境、调用 PyInstaller、启动检查
 ClaudeStatus.spec     PyInstaller 构建定义（收集的文件与 Qt 组件裁剪）
-.github/workflows/    GitHub Actions：在 Windows、Linux 与 macOS 上打包
+.github/workflows/    GitHub Actions：三个系统上测试，六个平台打包，打标签时发布
 ```
-
-## 测试
-
-```bash
-python -m unittest discover -s tests -t .
-```
-
-测试使用 Qt 的 offscreen 平台，不需要显示器。Claude Code 配置、Desktop 数据
-目录与进程列表全部指向临时目录中的假数据，不会联网，也不会改动或结束本机
-真实的 Claude Code / Claude Desktop。
-
-## 关于 md3 的几个问题
-
-开发中发现 `md3` 组件库的四处缺陷，本应用在自己的代码中做了绕过，库代码
-未做修改：
-
-1. `charts/bar_chart.py` 的 `_category_progress` 按下标线性累加入场错开量
-   （每个分类 0.06），超过约 16 个分类时后面的柱子在动画结束后仍是 0 高度。
-   见 `widgets/dense_charts.py` 的 `DenseBarChart`。
-2. `feedback/banner.py` 在按钮与文字同行时没有给文字列设置伸展系数，长文字
-   会被挤成很窄的一列。见 `widgets/common.py` 的 `InfoBanner`。
-3. `core/overlay.py` 的 `FloatingPanel._animate_to` 以 `DeleteWhenStopped`
-   启动动画却保留 Python 引用，打开动画结束后再关闭面板（或宿主窗口改变尺寸）
-   会访问已删除的对象而抛出 `RuntimeError`，侧边 / 底部面板因此无法正常关闭。
-   见 `widgets/common.py` 的 `DetailSheet`。
-4. `feedback/empty_state.py` 的 `EmptyState` 在说明文字加入布局之前就调用
-   `setVisible(True)`。这时它还没有父控件，会显示成一个独立的窗口，一闪而过。
-   见 `widgets/common.py` 的 `empty_state`。本应用的分区卡片与账号卡片原先也有
-   同样的问题（启动时会看到一堆窗口闪烁），已经修复；界面测试会检查启动与各页面
-   操作中不再出现这类窗口。

@@ -15,8 +15,8 @@
 
 构建定义在 ``ClaudeStatus.spec`` 中，本脚本负责检查环境、调用 PyInstaller，
 并在构建完成后用演示数据在后台启动一次程序、渲染全部页面，确认程序可用。
-PyInstaller 不能交叉编译，在哪个系统上构建就得到哪个系统的程序；其他平台
-的程序可用 GitHub Actions（``.github/workflows/build.yml``）生成。
+PyInstaller 不能交叉编译，在哪个系统上构建就得到哪个系统的程序；各平台的
+程序由 GitHub Actions（``.github/workflows/ci.yml``）分别构建。
 """
 
 from __future__ import annotations

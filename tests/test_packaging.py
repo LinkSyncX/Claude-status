@@ -148,8 +148,11 @@ class BuildScriptTest(unittest.TestCase):
         self.assertEqual(build.version_numbers("1.2.3.4.5"), (1, 2, 3, 4))
         self.assertEqual(build.version_numbers("2.0rc1"), (2, 0, 0, 0))
 
+    # 版本信息只用于 Windows 版；PyInstaller 读取它所需的 pefile 也只在
+    # Windows 上随 PyInstaller 安装。
     @unittest.skipUnless(
-        importlib.util.find_spec("PyInstaller"), "没有安装 PyInstaller"
+        sys.platform == "win32" and importlib.util.find_spec("PyInstaller"),
+        "需要 Windows 与 PyInstaller",
     )
     def test_version_info_accepted_by_pyinstaller(self):
         from PyInstaller.utils.win32 import versioninfo

@@ -3,6 +3,7 @@
 import json
 import os
 import pathlib
+import sys
 import tempfile
 import time
 import unittest
@@ -10,9 +11,13 @@ from unittest import mock
 
 from claude_status import claude_desktop
 
-FAKE_DESKTOP_EXE = (
-    "C:/Program Files/WindowsApps/Claude_9.9.0.0_x64__test/app/Claude.exe"
-)
+# 假的 Desktop 进程路径：macOS 上按 .app 识别，其他平台按 Windows 的安装位置。
+if sys.platform == "darwin":
+    FAKE_DESKTOP_EXE = "/Applications/Claude.app/Contents/MacOS/Claude"
+else:
+    FAKE_DESKTOP_EXE = (
+        "C:/Program Files/WindowsApps/Claude_9.9.0.0_x64__test/app/Claude.exe"
+    )
 
 
 def isolate_desktop_processes(test: unittest.TestCase) -> "FakeProcesses":

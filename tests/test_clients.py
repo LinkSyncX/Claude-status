@@ -2,6 +2,7 @@
 
 import datetime as dt
 import json
+import sys
 from unittest import mock
 
 from claude_status import claude_desktop
@@ -118,13 +119,15 @@ class DesktopTest(fixtures.IsolatedClaudeTest):
             "C:\\Users\\me\\AppData\\Local\\AnthropicClaude\\app-0.9.1"
             "\\claude.exe"
         )
-        self.assertTrue(claude_desktop.is_desktop_executable(desktop))
-        self.assertTrue(claude_desktop.is_desktop_executable(squirrel))
-        self.assertFalse(claude_desktop.is_desktop_executable(bundled))
-        self.assertFalse(claude_desktop.is_desktop_executable(cli))
-        self.assertFalse(
-            claude_desktop.is_desktop_executable("C:\\Windows\\explorer.exe")
-        )
+        # 都是 Windows 上的路径，按 Windows 的规则判断（macOS 上只认 .app）。
+        with mock.patch.object(sys, "platform", "win32"):
+            self.assertTrue(claude_desktop.is_desktop_executable(desktop))
+            self.assertTrue(claude_desktop.is_desktop_executable(squirrel))
+            self.assertFalse(claude_desktop.is_desktop_executable(bundled))
+            self.assertFalse(claude_desktop.is_desktop_executable(cli))
+            self.assertFalse(
+                claude_desktop.is_desktop_executable("C:\\Windows\\explorer.exe")
+            )
 
     def test_data_dir_override_and_readers(self):
         self.assertEqual(claude_desktop.data_dir(), self.desktop_dir)
