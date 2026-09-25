@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
+import os
 import pathlib
+import ssl
 import sys
 
 from PySide6 import QtCore
@@ -14,10 +17,20 @@ import md3
 from md3.theme import fonts
 
 import claude_status
+from claude_status import app_icon
 from claude_status import main_window
 from claude_status import state as state_module
 from claude_status import storage
 
+# Windows 任务栏用它区分应用（见 _use_own_taskbar_icon）。
+APP_USER_MODEL_ID = "ClaudeStatus.ClaudeStatus"
+# 各系统自带的根证书文件（见 _use_system_certificates）。
+CA_BUNDLES = (
+    "/etc/ssl/cert.pem",  # macOS、Alpine
+    "/etc/ssl/certs/ca-certificates.crt",  # Debian、Ubuntu、Arch
+    "/etc/pki/tls/certs/ca-bundle.crt",  # Fedora、RHEL
+    "/etc/ssl/ca-bundle.pem",  # openSUSE
+)
 EXTENDED_COLORS = {
     "success": "#2E7D32",
     "warning": "#F9A825",
@@ -124,9 +137,45 @@ def capture(
     return saved
 
 
+def _use_own_taskbar_icon() -> None:
+    """从源码运行时，让 Windows 任务栏单独显示本工具及其图标。
+
+    不设置时，任务栏把窗口归到 python.exe 名下，显示 Python 的图标；
+    打包后的程序本身就带图标，不需要设置。
+    """
+    if sys.platform != "win32" or getattr(sys, "frozen", False):
+        return
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            APP_USER_MODEL_ID
+        )
+    except (AttributeError, OSError):
+        pass
+
+
+def _use_system_certificates() -> None:
+    """打包后的程序在 macOS / Linux 上找不到根证书时，改用系统的证书文件。
+
+    打包进程序的 OpenSSL 按构建机上的路径查找根证书；用户电脑上没有这个
+    路径时，查询额度与登录的 HTTPS 请求会因证书校验失败而出错。Windows 上
+    Python 直接读取系统证书库，不受影响。
+    """
+    if sys.platform == "win32" or not getattr(sys, "frozen", False):
+        return
+    defaults = ssl.get_default_verify_paths()
+    if defaults.cafile or defaults.capath or os.environ.get("SSL_CERT_FILE"):
+        return
+    for path in CA_BUNDLES:
+        if os.path.isfile(path):
+            os.environ["SSL_CERT_FILE"] = path
+            return
+
+
 def main(argv: list[str] | None = None) -> int:
     """启动应用并进入事件循环，返回退出码。"""
     args = parse_args(argv)
+    _use_own_taskbar_icon()
+    _use_system_certificates()
     QtWidgets.QApplication.setHighDpiScaleFactorRoundingPolicy(
         QtCore.Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
@@ -134,6 +183,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setApplicationName(claude_status.APP_NAME)
     app.setApplicationDisplayName(claude_status.APP_NAME)
     app.setApplicationVersion(claude_status.__version__)
+    app.setWindowIcon(app_icon.icon())
     state = state_module.AppState(
         storage.Store(args.data_dir),
         force_demo=args.demo,

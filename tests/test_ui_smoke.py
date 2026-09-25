@@ -9,10 +9,12 @@ import os
 import pathlib
 import sys
 import tempfile
+from typing import override
 import unittest
 from unittest import mock
 
 from PySide6 import QtCore
+from PySide6 import QtWidgets
 
 import md3
 from md3.components import dialogs
@@ -35,6 +37,38 @@ def _pump(milliseconds: int = 50) -> None:
     loop.exec()
 
 
+_LEGIT_WINDOWS = (
+    QtCore.Qt.WindowType.Dialog,
+    QtCore.Qt.WindowType.Popup,
+    QtCore.Qt.WindowType.ToolTip,
+)
+
+
+class StrayWindowWatcher(QtCore.QObject):
+    """记录主窗口、对话框与弹出层之外显示出来的顶层窗口。
+
+    没有父控件的控件一旦 ``setVisible(True)`` 就会显示成独立窗口，等加入
+    布局后才变回子控件——启动时就会看到一堆窗口一闪而过。
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.stray: list[str] = []
+
+    @override
+    def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
+        if (
+            event.type() == QtCore.QEvent.Type.Show
+            and isinstance(watched, QtWidgets.QWidget)
+            and watched.isWindow()
+            and not isinstance(watched, main_window.MainWindow)
+            and watched.windowType() not in _LEGIT_WINDOWS
+        ):
+            text = watched.text() if isinstance(watched, QtWidgets.QLabel) else ""
+            self.stray.append(f"{type(watched).__name__} {text!r}")
+        return False
+
+
 class UiSmokeTest(unittest.TestCase):
     def setUp(self):
         self.errors: list[BaseException] = []
@@ -54,6 +88,9 @@ class UiSmokeTest(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
         fixtures.isolate_desktop_processes(self)
+        self.watcher = StrayWindowWatcher()
+        _APP.installEventFilter(self.watcher)
+        self.addCleanup(_APP.removeEventFilter, self.watcher)
         self.state = state_module.AppState(
             storage.Store(root / "data"), force_demo=True, offline=True
         )
@@ -74,6 +111,16 @@ class UiSmokeTest(unittest.TestCase):
     def tearDown(self):
         _pump()
         self.assertEqual(self.errors, [], "槽函数中出现异常")
+        self.assertEqual(self.watcher.stray, [], "出现了一闪而过的独立窗口")
+
+    def test_startup_shows_no_stray_windows(self):
+        # setUp 已经走完启动流程：创建主窗口、显示并刷新数据。
+        self.assertEqual(self.watcher.stray, [])
+        self.state.update_settings(theme_style="minimal", dark=True)
+        self.window.apply_theme()
+        self.state.refresh()
+        _pump(200)
+        self.assertEqual(self.watcher.stray, [])
 
     def test_all_pages_render(self):
         for key in main_window.PAGE_KEYS:

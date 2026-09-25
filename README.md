@@ -56,6 +56,50 @@ python main.py
 | `--page clients` | 启动后直接打开某个页面（accounts / clients / dashboard / heatmap / settings） |
 | `--screenshot DIR` | 不显示窗口，把每个页面渲染为 PNG 后退出（总是离线） |
 
+也可以打包成不需要安装 Python 的独立程序，见下一节。
+
+## 打包为可执行程序
+
+```bash
+pip install -r requirements-build.txt
+python build.py
+```
+
+| 系统 | 生成的程序（`dist/` 下） | 说明 |
+| --- | --- | --- |
+| Windows | `ClaudeStatus.exe` | 单个 exe（约 35 MB），双击运行，没有控制台窗口 |
+| Linux | `claude-status` | 单个可执行文件 |
+| macOS | `Claude Status.app` | 应用包 |
+
+- `python build.py --onedir`：生成目录而不是单个文件。单文件程序每次启动都要
+  先解压到临时目录，目录形式启动更快。
+- `python build.py --console`：保留控制台窗口，程序出错时能看到报错信息。
+- 构建完成后，脚本会用演示数据在后台启动一次程序、渲染全部页面，确认程序可用。
+- 构建定义在 `ClaudeStatus.spec` 中，熟悉 PyInstaller 的话也可以直接运行
+  `pyinstaller ClaudeStatus.spec`。Windows 版去掉了本程序用不到的 Qt 组件
+  （软件 OpenGL、虚拟键盘及其带入的 Qt Quick / QML、PDF 插件、网络 TLS 插件与
+  翻译文件），体积小了约四成，单文件版启动也更快。
+- 程序的命令行参数与 `python main.py` 相同；数据目录也相同，两种运行方式可以
+  混用。
+
+PyInstaller 不能交叉编译，在 Windows 上只能打包出 Windows 程序。其他平台的
+程序可以在对应系统上运行上面的命令，也可以把仓库推送到 GitHub，用 Actions
+生成：在仓库的 Actions 页面手动运行“打包”工作流（`.github/workflows/build.yml`），
+它会在 Windows、Linux 与 macOS（Apple 芯片与 Intel）上分别打包，完成后在运行
+页面底部下载；推送 `v` 开头的标签（如 `v0.1.0`）时，还会把各平台的程序发布到
+对应的 Release。
+
+几点说明：
+
+- 程序没有代码签名。从网上下载后首次运行时，Windows 可能提示“Windows 已保护
+  你的电脑”，点“更多信息 → 仍要运行”；macOS 会拦截打开，可在“系统设置 →
+  隐私与安全性”中点“仍要打开”。
+- Linux 版需要图形桌面环境。Qt 依赖 `libxcb-cursor0` 等系统库，启动报 xcb
+  相关错误时安装即可（Ubuntu / Debian：`sudo apt install libxcb-cursor0`）。
+  Actions 在 Ubuntu 22.04 上构建，生成的程序可在 glibc 2.35 及以上的发行版运行。
+- Windows 以外的系统没有 DPAPI，保存的登录以带标记的明文存放在数据目录中
+  （设置页会提示）。
+
 ## 添加账号并切换
 
 顶部应用栏的 ? 按钮随时可以查看这份说明。
@@ -197,6 +241,7 @@ Claude Desktop 的数据目录：Microsoft Store 版为
 ```
 claude_status/
   app.py              入口：参数解析、字体回退、主题安装、截图模式
+  app_icon.py         应用图标（QPainter 绘制），打包时导出为 .ico / .icns
   main_window.py      导航轨 + 应用栏 + 页面切换
   state.py            AppState：账号 / 设置 / 用量数据与后台扫描
   client_state.py     ClientManager：两个客户端的实时登录、额度查询与切换
@@ -221,6 +266,10 @@ claude_status/
   pages/              账号、客户端、统计、热力图、设置页面，账号对话框与切换编排
   widgets/            账号卡片、额度条、日历热力图、统计卡片、稀疏坐标轴图表等
 tests/                单元测试与界面测试
+main.py               启动脚本
+build.py              打包为可执行程序：检查环境、调用 PyInstaller、启动检查
+ClaudeStatus.spec     PyInstaller 构建定义（收集的文件与 Qt 组件裁剪）
+.github/workflows/    GitHub Actions：在 Windows、Linux 与 macOS 上打包
 ```
 
 ## 测试
@@ -235,7 +284,7 @@ python -m unittest discover -s tests -t .
 
 ## 关于 md3 的几个问题
 
-开发中发现 `md3` 组件库的三处缺陷，本应用在自己的子类中做了绕过，库代码
+开发中发现 `md3` 组件库的四处缺陷，本应用在自己的代码中做了绕过，库代码
 未做修改：
 
 1. `charts/bar_chart.py` 的 `_category_progress` 按下标线性累加入场错开量
@@ -247,3 +296,8 @@ python -m unittest discover -s tests -t .
    启动动画却保留 Python 引用，打开动画结束后再关闭面板（或宿主窗口改变尺寸）
    会访问已删除的对象而抛出 `RuntimeError`，侧边 / 底部面板因此无法正常关闭。
    见 `widgets/common.py` 的 `DetailSheet`。
+4. `feedback/empty_state.py` 的 `EmptyState` 在说明文字加入布局之前就调用
+   `setVisible(True)`。这时它还没有父控件，会显示成一个独立的窗口，一闪而过。
+   见 `widgets/common.py` 的 `empty_state`。本应用的分区卡片与账号卡片原先也有
+   同样的问题（启动时会看到一堆窗口闪烁），已经修复；界面测试会检查启动与各页面
+   操作中不再出现这类窗口。

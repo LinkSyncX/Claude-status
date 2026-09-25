@@ -172,10 +172,11 @@ class AccountCard(cards.Card):
             "", "body-small", "on_surface_variant"
         )
         quota_layout.addWidget(self._quota_hint)
+        # 加入布局（有了父控件）之后再设置可见性，否则会闪出独立窗口。
+        self.content_layout.addWidget(self._quota_box)
         self._quota_box.setVisible(
             account.auth_type is models.AuthType.OAUTH
         )
-        self.content_layout.addWidget(self._quota_box)
         self._budget_row = QtWidgets.QWidget()
         budget_layout = QtWidgets.QVBoxLayout(self._budget_row)
         budget_layout.setContentsMargins(0, 0, 0, 0)

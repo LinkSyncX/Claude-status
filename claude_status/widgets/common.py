@@ -231,15 +231,17 @@ class SectionCard(cards.Card):
             subtitle, "body-small", "on_surface_variant"
         )
         self.subtitle_label.setWordWrap(True)
-        self.subtitle_label.setVisible(bool(subtitle))
         titles.addWidget(self.subtitle_label)
         header.addLayout(titles, 1)
         self._actions = QtWidgets.QHBoxLayout()
         self._actions.setSpacing(round(spacing.SPACE_2))
         header.addLayout(self._actions)
+        # 先把标题栏挂到卡片上，再设置可见性：没有父控件的控件调用
+        # setVisible(True) 会显示成独立的顶层窗口（启动时一闪而过）。
+        # 没有标题的卡片，标题栏里只有隐藏的控件，不占空间。
+        self.content_layout.addLayout(header)
         self.title_label.setVisible(bool(title))
-        if title or subtitle:
-            self.content_layout.addLayout(header)
+        self.subtitle_label.setVisible(bool(subtitle))
         self._header = header
 
     def add_header_widget(self, child: QtWidgets.QWidget) -> None:
@@ -535,6 +537,19 @@ class InfoBanner(feedback.Banner):
     ) -> None:
         super().__init__(text, icon=icon, parent=parent)
         self._grid.setColumnStretch(1, 1)
+
+
+def empty_state(
+    headline: str, supporting_text: str, icon: icons.IconLike
+) -> feedback.EmptyState:
+    """空状态。
+
+    md3 的 ``EmptyState`` 在说明文字加入布局之前就让它可见，这时它还没有
+    父控件，会显示成一闪而过的独立窗口；构造完成后再设置说明文字则不会。
+    """
+    state = feedback.EmptyState(headline, icon=icon)
+    state.set_supporting_text(supporting_text)
+    return state
 
 
 def indented(child: QtWidgets.QWidget, left: int) -> QtWidgets.QWidget:

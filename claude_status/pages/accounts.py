@@ -252,7 +252,7 @@ class AccountsPage(common.Page):
         self._table.setMinimumHeight(420)
         self._table.row_activated.connect(self._on_table_activated)
         self._stack.addWidget(self._table)
-        self._empty = feedback.EmptyState(
+        self._empty = common.empty_state(
             "还没有账号",
             "添加你的第一个 Claude 账号，或从本机 Claude Code 自动识别当前登录。",
             icon="manage_accounts",
@@ -262,7 +262,7 @@ class AccountsPage(common.Page):
             self._add_samples
         )
         self._stack.addWidget(self._empty)
-        self._no_match = feedback.EmptyState(
+        self._no_match = common.empty_state(
             "没有匹配的账号", "换个关键词或筛选条件试试。", icon="search_off"
         )
         self._stack.addWidget(self._no_match)
