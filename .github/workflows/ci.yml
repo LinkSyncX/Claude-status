@@ -170,10 +170,19 @@ jobs:
         with:
           path: release
           merge-multiple: true
+          # macOS 的产物本身是 zip，不加这一项会被解压成 .app 目录。
+          skip-decompress: true
 
       - name: 生成校验和
         working-directory: release
-        run: sha256sum ClaudeStatus-* > SHA256SUMS.txt
+        run: |
+          ls -l
+          # 每个平台都应是单个文件；出现目录说明有产物被解压了，不发布。
+          if [ -n "$(find . -mindepth 1 -type d)" ]; then
+            echo "::error::有产物被解压成了目录，没有发布"
+            exit 1
+          fi
+          sha256sum ClaudeStatus-* > SHA256SUMS.txt
 
       - uses: softprops/action-gh-release@v3
         with:
